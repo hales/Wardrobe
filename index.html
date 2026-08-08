@@ -2887,14 +2887,22 @@ function App({ session }) {
     });
   };
 
+  const onSaveFail = (e) => {
+    const msg = (e && (e.message || e.error_description)) || String(e);
+    flash(`Couldn't save — ${msg}`);
+    load();
+  };
+
   const setOutfits = (updater) => {
     setOutfitsState((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       const nextIds = new Set(next.map((o) => o.id));
-      prev.forEach((o) => { if (!nextIds.has(o.id)) db.deleteOutfit(o.id); });
+      prev.forEach((o) => {
+        if (!nextIds.has(o.id)) db.deleteOutfit(o.id).then(({ error }) => { if (error) onSaveFail(error); });
+      });
       next.forEach((o) => {
         const old = prev.find((p) => p.id === o.id);
-        if (!old || old !== o) db.saveOutfit(o);
+        if (!old || old !== o) db.saveOutfit(o).then(({ error }) => { if (error) onSaveFail(error); });
       });
       return next;
     });
