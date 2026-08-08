@@ -1382,8 +1382,8 @@ function Carousel({ items, onPick, selected, size = 124 }) {
   );
 }
 
-function Closet({ closets, setClosets, openItem, openAdd }) {
-  const [owner, setOwner] = useState("her");
+function Closet({ closets, setClosets, openItem, openAdd, defaultOwner, hideAdd }) {
+  const [owner, setOwner] = useState(defaultOwner || "her");
   const [layout, setLayout] = useState("carousel");
   const [locFilter, setLocFilter] = useState("all");
   const closet = closets[owner];
@@ -1475,7 +1475,7 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
           <span className="rl-mono" style={{ fontSize: 11, color: "var(--muted)" }}>
             {String(total).padStart(3, "0")}
           </span>
-          <button className="rl-btn" onClick={() => openAdd(owner)}>Add pieces</button>
+          {!hideAdd && <button className="rl-btn" onClick={() => openAdd(owner)}>Add pieces</button>}
         </div>
       </div>
 
@@ -2931,6 +2931,7 @@ function App({ session }) {
   const [detail, setDetail] = useState(null);
   const [status, setStatus] = useState("");
   const catsRef = useRef(null);
+  const isGCF = (session.user.email || "").toLowerCase().startsWith("gcorderofuentes");
 
   const flash = (t) => { setStatus(t); setTimeout(() => setStatus(""), 1800); };
 
@@ -3129,7 +3130,14 @@ function App({ session }) {
             )}
 
             {view === "closet" && (
-              <Closet closets={closets} setClosets={setClosets} openItem={setDetail} openAdd={setAdding} />
+              <Closet
+                closets={closets}
+                setClosets={setClosets}
+                openItem={setDetail}
+                openAdd={setAdding}
+                defaultOwner={isGCF ? "his" : "her"}
+                hideAdd={isGCF}
+              />
             )}
 
             {view === "outfits" && (
