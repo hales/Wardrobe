@@ -1814,6 +1814,7 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
 function Outfits({ closets, outfits, setOutfits, allItems }) {
   const [building, setBuilding] = useState(null); // {id?, owner, name, items}
   const [picking, setPicking] = useState(false);
+  const [menuFor, setMenuFor] = useState(null);
 
   const start = (owner) => setBuilding({ owner, name: "", items: [] });
 
@@ -1863,16 +1864,45 @@ function Outfits({ closets, outfits, setOutfits, allItems }) {
                   {String(pieces.length).padStart(2, "0")}
                 </span>
               </div>
-              <div className="rl-rack" style={{ border: 0 }}>
-                {pieces.map((p) => (
-                  <Thumb key={p.id} item={p} onClick={() => setBuilding({ ...o })} />
-                ))}
+              <div style={{ padding: "14px 12px" }}>
+                <LookBoard items={pieces} onRemove={() => setBuilding({ ...o })} empty="Nothing chosen yet." />
               </div>
-              <div style={{ padding: 10, display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                <button className="rl-btn quiet tiny" onClick={() => setOutfits((os) => os.filter((x) => x.id !== o.id))}>
-                  Delete
+              <div style={{ padding: 10, display: "flex", justifyContent: "flex-end", position: "relative" }}>
+                <button
+                  className="rl-btn quiet tiny"
+                  style={{ padding: "6px 12px" }}
+                  aria-label="Outfit options"
+                  onClick={() => setMenuFor((m) => (m === o.id ? null : o.id))}
+                >
+                  ⋯
                 </button>
-                <button className="rl-btn ghost tiny" onClick={() => setBuilding({ ...o })}>Edit</button>
+                {menuFor === o.id && (
+                  <>
+                    <div style={{ position: "fixed", inset: 0, zIndex: 5 }} onClick={() => setMenuFor(null)} />
+                    <div
+                      style={{
+                        position: "absolute", right: 10, bottom: "100%", marginBottom: 4,
+                        background: "#fff", border: "1px solid var(--rule)", zIndex: 6,
+                        display: "flex", flexDirection: "column", minWidth: 120,
+                      }}
+                    >
+                      <button
+                        className="rl-btn quiet tiny"
+                        style={{ border: 0, borderRadius: 0, textAlign: "left", padding: "10px 14px" }}
+                        onClick={() => { setMenuFor(null); setBuilding({ ...o }); }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="rl-btn quiet tiny"
+                        style={{ border: 0, borderRadius: 0, textAlign: "left", padding: "10px 14px", borderTop: "1px solid var(--rule-soft)" }}
+                        onClick={() => { setMenuFor(null); setOutfits((os) => os.filter((x) => x.id !== o.id)); }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           );
