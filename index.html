@@ -1,0 +1,3173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Wardrobe</title>
+<link rel="icon" href="data:,">
+<meta name="theme-color" content="#E3DACB">
+<style>
+  html,body{margin:0;padding:0;background:#E3DACB;}
+  #boot{font-family:system-ui,sans-serif;font-size:12px;letter-spacing:.16em;
+        text-transform:uppercase;color:#6B5B4B;padding:40px 24px;}
+</style>
+
+<!-- ================================================================= -->
+<!--  PASTE YOUR TWO SUPABASE KEYS HERE. Nothing else needs editing.   -->
+<!-- ================================================================= -->
+<script>
+  window.RAIL_CONFIG = {
+    SUPABASE_URL:      "PASTE_PROJECT_URL_HERE",
+    SUPABASE_ANON_KEY: "PASTE_ANON_KEY_HERE"
+  };
+</script>
+<!-- ================================================================= -->
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"><div id="boot">Loading…</div></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+/* ------------------------------------------------------------------ */
+/*  supabase                                                           */
+/* ------------------------------------------------------------------ */
+
+const CFG = window.RAIL_CONFIG || {};
+const CONFIGURED =
+  typeof CFG.SUPABASE_URL === "string" &&
+  CFG.SUPABASE_URL.indexOf("https://") === 0 &&
+  typeof CFG.SUPABASE_ANON_KEY === "string" &&
+  CFG.SUPABASE_ANON_KEY.length > 30;
+
+const supa = CONFIGURED
+  ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY)
+  : null;
+
+let lastLocalWrite = 0;
+const touch = () => { lastLocalWrite = Date.now(); };
+
+const db = {
+  async loadAll() {
+    const [items, settings, trips, outfits] = await Promise.all([
+      supa.from("items").select("*").order("created_at", { ascending: true }),
+      supa.from("closet_settings").select("*"),
+      supa.from("trips").select("*"),
+      supa.from("outfits").select("*"),
+    ]);
+    const err = items.error || settings.error || trips.error || outfits.error;
+    if (err) throw err;
+
+    const catsFor = (owner) => {
+      const row = (settings.data || []).find((r) => r.owner === owner);
+      return row && Array.isArray(row.cats) && row.cats.length ? row.cats : null;
+    };
+
+    return {
+      closets: {
+        her: {
+          items: (items.data || []).filter((r) => r.owner === "her").map(fromRow),
+          cats: migrateCats("her", catsFor("her")),
+        },
+        his: {
+          items: (items.data || []).filter((r) => r.owner === "his").map(fromRow),
+          cats: migrateCats("his", catsFor("his")),
+        },
+      },
+      trips: (trips.data || []).map((r) => r.data).filter(Boolean),
+      outfits: (outfits.data || []).map((r) => r.data).filter(Boolean),
+    };
+  },
+
+  addItems(items) {
+    touch();
+    return supa.from("items").insert(items.map(toRow));
+  },
+  updateItem(it) {
+    touch();
+    return supa.from("items").update({ owner: it.owner, cat: it.cat, name: it.name, img: it.img }).eq("id", it.id);
+  },
+  deleteItem(id) {
+    touch();
+    return supa.from("items").delete().eq("id", id);
+  },
+  saveCats(owner, cats) {
+    touch();
+    return supa.from("closet_settings").upsert({ owner, cats });
+  },
+  saveTrip(t) {
+    touch();
+    return supa.from("trips").upsert({ id: t.id, data: t, updated_at: new Date().toISOString() });
+  },
+  deleteTrip(id) {
+    touch();
+    return supa.from("trips").delete().eq("id", id);
+  },
+  saveOutfit(o) {
+    touch();
+    return supa.from("outfits").upsert({ id: o.id, data: o });
+  },
+  deleteOutfit(id) {
+    touch();
+    return supa.from("outfits").delete().eq("id", id);
+  },
+};
+
+function toRow(it) {
+  return { id: it.id, owner: it.owner, cat: it.cat, name: it.name || "", img: it.img || "" };
+}
+function fromRow(r) {
+  return {
+    id: r.id,
+    owner: r.owner,
+    cat: r.cat,
+    name: r.name || "",
+    img: r.img || "",
+    addedAt: r.created_at ? Date.parse(r.created_at) : 0,
+  };
+}
+
+const tripTimers = {};
+function saveTripSoon(t, onDone) {
+  clearTimeout(tripTimers[t.id]);
+  tripTimers[t.id] = setTimeout(() => {
+    db.saveTrip(t).then(({ error }) => onDone && onDone(error));
+  }, 450);
+}
+
+/* ------------------------------------------------------------------ */
+/*  helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+const DEFAULT_CATS = {
+  her: [
+    "Dresses",
+    "Tops",
+    "Jackets",
+    "Skirts",
+    "Shorts",
+    "Shoes",
+    "Swim",
+    "Hats",
+  ],
+  his: [
+    "Jackets",
+    "Polos",
+    "Button downs",
+    "Tshirts",
+    "Shorts",
+    "Pants",
+    "Shoes",
+  ],
+};
+
+/* Category lists shipped in earlier versions. A closet still carrying one
+   of these verbatim has never been customised, so it can be safely moved
+   to the current defaults. A list the person has edited is left alone. */
+const LEGACY_CATS = {
+  her: [
+    ["Dresses","Tops","Knitwear","Outerwear","Bottoms","Shoes","Bags","Swim","Accessories"],
+    ["Dresses","Tops","Jackets","Skirts","Shorts","Shoes","Bathing suits","Hats"],
+  ],
+  his: [
+    ["Outerwear","Shirts","Knitwear","Tees & polos","Trousers","Shorts","Swim","Shoes","Accessories"],
+  ],
+};
+
+function migrateCats(owner, saved) {
+  if (!Array.isArray(saved) || !saved.length) return DEFAULT_CATS[owner];
+  const key = JSON.stringify(saved);
+  const isLegacy = (LEGACY_CATS[owner] || []).some((l) => JSON.stringify(l) === key);
+  return isLegacy ? DEFAULT_CATS[owner] : saved;
+}
+
+const OWNER_LABEL = { her: "Her", his: "His" };
+
+function parseYMD(s) {
+  const [y, m, d] = String(s).split("-").map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+function toYMD(dt) {
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(
+    dt.getDate()
+  ).padStart(2, "0")}`;
+}
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function dayLabel(ymd) {
+  const d = parseYMD(ymd);
+  return DOW[d.getDay()].toUpperCase();
+}
+function dayNum(ymd) {
+  const d = parseYMD(ymd);
+  return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function rangeLabel(start, end) {
+  if (!start) return "";
+  const a = parseYMD(start);
+  if (!end || end === start) return `${a.getDate()} ${MON[a.getMonth()]}`;
+  const b = parseYMD(end);
+  if (a.getMonth() === b.getMonth())
+    return `${a.getDate()}–${b.getDate()} ${MON[a.getMonth()]}`;
+  return `${a.getDate()} ${MON[a.getMonth()]} – ${b.getDate()} ${MON[b.getMonth()]}`;
+}
+function daysBetween(start, end) {
+  const out = [];
+  if (!start) return out;
+  const a = parseYMD(start);
+  const b = end ? parseYMD(end) : a;
+  const cur = new Date(a);
+  let guard = 0;
+  while (cur <= b && guard < 90) {
+    out.push(toYMD(cur));
+    cur.setDate(cur.getDate() + 1);
+    guard++;
+  }
+  return out;
+}
+
+/* A filename is only worth keeping if a person chose it. Camera and
+   screenshot names are noise, so they start blank instead. */
+function cleanName(filename) {
+  const base = String(filename || "").replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+  if (!base) return "";
+  if (/^(img|image|photo|pic|pxl|dsc|dscf|mvimg|screenshot|fullsizerender|untitled)[\s\d]*$/i.test(base)) return "";
+  if (/^\d{4,}[\s\d]*$/.test(base)) return "";
+  return base.slice(0, 40);
+}
+
+/* Re-crops an already-stored image tight to its garment. Used to repair
+   pieces added when photos were padded into squares. Anything with no
+   transparency (a kept-original photo) comes back unchanged. */
+function recropDataUrl(src, margin = 0.05) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onerror = () => resolve(null);
+    img.onload = () => {
+      try {
+        const w = img.width, h = img.height;
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        const ctx = c.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        const box = opaqueBounds(ctx, w, h);
+        if (!box) return resolve(null);
+        // already tight — nothing to gain
+        if (box.w > w * 0.95 && box.h > h * 0.95) return resolve(null);
+
+        const longest = Math.max(box.w, box.h);
+        const pad = Math.round(longest * margin);
+        const out = document.createElement("canvas");
+        out.width = box.w + pad * 2;
+        out.height = box.h + pad * 2;
+        const octx = out.getContext("2d");
+        octx.drawImage(c, box.x, box.y, box.w, box.h, pad, pad, box.w, box.h);
+
+        let data = null;
+        try { data = out.toDataURL("image/webp", 0.8); } catch (e) { data = null; }
+        if (!data || data.indexOf("image/webp") < 0) data = out.toDataURL("image/png");
+        resolve(data);
+      } catch (e) {
+        resolve(null);
+      }
+    };
+    img.src = src;
+  });
+}
+
+function imageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read that file"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("That file isn't an image we can read"));
+      img.onload = () => resolve(img);
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/* Knocks out a plain background by flooding inward from the edges.
+   Works well for a garment laid on a floor, bed or table of roughly even
+   colour. It cannot separate an item from a busy room or from a person
+   wearing it — nothing here invents pixels that were never photographed. */
+function knockOutBackground(ctx, w, h, tolerance) {
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  const at = (x, y) => (y * w + x) * 4;
+
+  // estimate the background from a ring of border pixels (median per channel)
+  const rs = [], gs = [], bs = [];
+  const stepX = Math.max(1, Math.floor(w / 80));
+  const stepY = Math.max(1, Math.floor(h / 80));
+  for (let x = 0; x < w; x += stepX) {
+    for (const y of [0, h - 1]) { const i = at(x, y); rs.push(d[i]); gs.push(d[i + 1]); bs.push(d[i + 2]); }
+  }
+  for (let y = 0; y < h; y += stepY) {
+    for (const x of [0, w - 1]) { const i = at(x, y); rs.push(d[i]); gs.push(d[i + 1]); bs.push(d[i + 2]); }
+  }
+  const med = (a) => { a.sort((p, q) => p - q); return a[Math.floor(a.length / 2)] || 0; };
+  const br = med(rs), bg = med(gs), bb = med(bs);
+
+  const tol2 = tolerance * tolerance * 3;
+  const seen = new Uint8Array(w * h);
+  const stack = [];
+  for (let x = 0; x < w; x++) { stack.push(x, 0, x, h - 1); }
+  for (let y = 0; y < h; y++) { stack.push(0, y, w - 1, y); }
+
+  let cleared = 0;
+  while (stack.length) {
+    const y = stack.pop(), x = stack.pop();
+    if (x < 0 || y < 0 || x >= w || y >= h) continue;
+    const p = y * w + x;
+    if (seen[p]) continue;
+    const i = p * 4;
+    const dr = d[i] - br, dg = d[i + 1] - bg, db = d[i + 2] - bb;
+    if (dr * dr + dg * dg + db * db > tol2) continue;
+    seen[p] = 1;
+    d[i + 3] = 0;
+    cleared++;
+    stack.push(x + 1, y, x - 1, y, x, y + 1, x, y - 1);
+  }
+
+  // soften the cut edge so it doesn't look scissored
+  const alpha = new Uint8ClampedArray(w * h);
+  for (let p = 0; p < w * h; p++) alpha[p] = d[p * 4 + 3];
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const p = y * w + x;
+      if (alpha[p] === 0) continue;
+      let sum = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) sum += alpha[p + dy * w + dx];
+      const avg = sum / 9;
+      if (avg < 255) d[p * 4 + 3] = avg;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  return cleared / (w * h);
+}
+
+function opaqueBounds(ctx, w, h, threshold = 12) {
+  const d = ctx.getImageData(0, 0, w, h).data;
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (d[(y * w + x) * 4 + 3] > threshold) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+/* Crops tight to the garment and keeps its true aspect ratio. An earlier
+   version padded everything into a square, which left transparent margins
+   around each piece — that made wide items like shoes render tiny and
+   stopped layered pieces from actually overlapping. Uniform display size
+   is handled by the closet's fixed slide boxes instead. */
+async function processPhoto(file, opts) {
+  const { removeBg = true, tolerance = 34, out = 380, margin = 0.05 } = opts || {};
+  const img = await imageFromFile(file);
+
+  const workMax = 800;
+  const scale = Math.min(1, workMax / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+
+  const work = document.createElement("canvas");
+  work.width = w; work.height = h;
+  const wctx = work.getContext("2d", { willReadFrequently: true });
+  wctx.drawImage(img, 0, 0, w, h);
+
+  let note = null;
+  let box = null;
+
+  if (removeBg) {
+    let cleared = 0;
+    try {
+      cleared = knockOutBackground(wctx, w, h, tolerance);
+    } catch (e) {
+      note = "Couldn't read the pixels of this one — kept it as-is.";
+    }
+    if (!note) {
+      if (cleared < 0.04) note = "Background too busy to remove cleanly — kept the original.";
+      else if (cleared > 0.97) note = "That removed nearly everything — kept the original.";
+    }
+    if (note) {
+      wctx.clearRect(0, 0, w, h);
+      wctx.drawImage(img, 0, 0, w, h);
+    } else {
+      box = opaqueBounds(wctx, w, h);
+    }
+  }
+
+  if (!box) box = { x: 0, y: 0, w, h };
+
+  const k = (out * (1 - margin * 2)) / Math.max(box.w, box.h);
+  const dw = Math.max(1, Math.round(box.w * k));
+  const dh = Math.max(1, Math.round(box.h * k));
+  const pad = Math.round(out * margin);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = dw + pad * 2;
+  canvas.height = dh + pad * 2;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(work, box.x, box.y, box.w, box.h, pad, pad, dw, dh);
+
+  let data = null;
+  try { data = canvas.toDataURL("image/webp", 0.8); } catch (e) { data = null; }
+  if (!data || data.indexOf("image/webp") < 0) data = canvas.toDataURL("image/png");
+  return { img: data, note };
+}
+
+function approxSize(obj) {
+  try {
+    return JSON.stringify(obj).length;
+  } catch (e) {
+    return 0;
+  }
+}
+function fmtBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  styles                                                             */
+/* ------------------------------------------------------------------ */
+
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap');
+
+.rl {
+  /* A kissaten: aged plaster walls, porcelain cups, espresso, brass and
+     a single stroke of hanko vermilion. */
+  --paper: #FAF7F1;
+  --wall: #E3DACB;
+  --ink: #2B211A;
+  --rule: #C2B6A3;
+  --rule-soft: #D6CCBB;
+  --muted: #6B5B4B;
+  --tag: #E7CF97;
+  --tag-ink: #4A3820;
+  --tag-deep: #C9A75C;
+  --accent: #A8452E;
+  font-family: 'Zen Kaku Gothic New', ui-sans-serif, system-ui, -apple-system, 'Hiragino Sans', sans-serif;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--wall);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+.rl * { box-sizing: border-box; }
+.rl button { font-family: inherit; cursor: pointer; }
+.rl input, .rl select, .rl textarea { font-family: inherit; }
+.rl :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.rl-mono { font-family: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* ---- eyebrow / label type ---- */
+.rl-eyebrow {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rl-display {
+  font-family: 'Shippori Mincho', 'Hiragino Mincho ProN', Georgia, serif;
+  font-weight: 500;
+  letter-spacing: .01em;
+  line-height: 1.02;
+}
+
+/* ---- chrome ---- */
+.rl-top {
+  position: sticky; top: 0; z-index: 40;
+  background: var(--wall);
+  border-bottom: 1px solid var(--ink);
+  box-shadow: 0 3px 0 -2px var(--rule);
+}
+.rl-topin {
+  max-width: 1180px; margin: 0 auto;
+  padding: 14px 18px 0;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.rl-brand {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+}
+.rl-wordmark {
+  font-family: 'Shippori Mincho', 'Hiragino Mincho ProN', Georgia, serif;
+  font-size: 17px; font-weight: 600;
+  letter-spacing: .16em; text-transform: uppercase;
+}
+.rl-nav { display: flex; gap: 2px; }
+.rl-navbtn {
+  appearance: none; background: none; border: 0;
+  padding: 8px 2px; margin-right: 20px;
+  font-size: 12px; font-weight: 600; letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.rl-navbtn[data-on="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+
+.rl-wrap { max-width: 1180px; margin: 0 auto; padding: 22px 18px 120px; }
+
+/* ---- buttons ----
+   Pills against square paper: the controls are the soft layer, the cards
+   and tiles stay hard-edged, so the contrast reads as chosen. */
+.rl-btn {
+  appearance: none; border: 1px solid var(--ink); background: var(--ink); color: var(--paper);
+  border-radius: 999px; padding: 11px 22px;
+  font-size: 11px; font-weight: 500; letter-spacing: .13em; text-transform: uppercase;
+  transition: background .16s ease, color .16s ease, border-color .16s ease, transform .08s ease;
+}
+.rl-btn:hover { background: #3E3128; border-color: #3E3128; }
+.rl-btn:active { transform: translateY(1px); }
+.rl-btn:disabled { opacity: .3; cursor: not-allowed; transform: none; }
+.rl-btn:disabled:hover { background: var(--ink); border-color: var(--ink); }
+
+.rl-btn.ghost { background: transparent; color: var(--ink); }
+.rl-btn.ghost:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+.rl-btn.quiet { background: transparent; color: var(--muted); border-color: var(--rule); }
+.rl-btn.quiet:hover { background: transparent; color: var(--ink); border-color: var(--ink); }
+
+.rl-btn.tiny { padding: 7px 15px; font-size: 10px; letter-spacing: .11em; }
+
+/* ---- inputs ---- */
+.rl-field {
+  width: 100%; background: var(--paper); border: 1px solid var(--rule);
+  padding: 11px 14px; font-size: 14px; color: var(--ink); border-radius: 4px;
+  transition: border-color .16s ease;
+}
+.rl-field::placeholder { color: #B3A794; }
+.rl-field:focus { outline: none; border-color: var(--ink); }
+textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
+
+/* ---- the rail: category row ---- */
+.rl-railhead {
+  display: flex; align-items: baseline; gap: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--ink);
+}
+.rl-railname {
+  font-size: 13px; font-weight: 600; letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.rl-raildots { flex: 1; border-bottom: 1px dotted var(--rule); transform: translateY(-4px); }
+.rl-railcount { font-size: 11px; color: var(--muted); }
+
+.rl-rack {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 1px;
+  background: var(--rule-soft);
+  border: 1px solid var(--rule-soft);
+  border-top: 0;
+}
+.rl-cell {
+  position: relative; background: var(--paper);
+  aspect-ratio: 1 / 1.14;
+  display: flex; align-items: center; justify-content: center;
+  padding: 8px; border: 0;
+}
+.rl-cell img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.rl-cell[data-sel="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
+.rl-cell .rl-check {
+  position: absolute; top: 5px; right: 5px;
+  width: 17px; height: 17px; background: var(--ink); color: var(--paper);
+  border-radius: 50%; font-size: 10px; display: flex; align-items: center; justify-content: center;
+}
+.rl-cell .rl-owner {
+  position: absolute; bottom: 4px; left: 5px;
+  font-size: 8px; letter-spacing: .1em; color: #BFB3A0; text-transform: uppercase;
+}
+
+/* ---- hang tag ---- */
+.rl-days {
+  display: flex; gap: 0; overflow-x: auto; padding-top: 26px;
+  scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+}
+.rl-day {
+  flex: 0 0 208px; scroll-snap-align: start;
+  border-right: 1px solid var(--rule);
+  padding: 0 12px 20px; position: relative;
+}
+.rl-day:first-child { padding-left: 0; }
+.rl-day:last-child { border-right: 0; }
+.rl-tag {
+  position: relative; display: inline-block;
+  background: var(--paper); border: 1px solid var(--ink);
+  padding: 16px 12px 8px; min-width: 78px; text-align: center;
+}
+.rl-tag::before {
+  content: ""; position: absolute; left: 50%; top: -22px;
+  width: 1px; height: 22px; background: var(--ink);
+}
+.rl-taghole {
+  position: absolute; top: 5px; left: 50%; transform: translateX(-50%);
+  width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--ink);
+  background: var(--wall);
+}
+.rl-tagday { font-size: 11px; font-weight: 700; letter-spacing: .16em; }
+.rl-tagdate { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+.rl-postit {
+  background: var(--tag); border: 0; color: var(--tag-ink);
+  padding: 6px 8px; font-size: 11px; line-height: 1.3;
+  box-shadow: 1px 1px 0 rgba(0,0,0,.13);
+  display: block; width: 100%; text-align: left;
+  margin-top: 6px; position: relative;
+}
+.rl-postit .x {
+  position: absolute; top: 2px; right: 4px; font-size: 11px; opacity: .45;
+}
+
+.rl-slotgrid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+  background: var(--rule-soft); border: 1px solid var(--rule-soft);
+}
+
+/* ---- paired day view ---- */
+.rl-pair { border-top: 1px solid var(--rule); }
+.rl-pairday { border-bottom: 1px solid var(--rule); }
+.rl-pairbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; background: #EFE8DC;
+}
+.rl-pairbar[data-event="true"] { background: var(--tag); color: var(--tag-ink); }
+.rl-pairbar .d {
+  font-size: 11px; font-weight: 700; letter-spacing: .14em;
+}
+.rl-pairbar .e {
+  font-size: 11px; font-weight: 500; letter-spacing: .02em; opacity: .85;
+}
+.rl-pairbar .n { margin-left: auto; font-size: 10px; opacity: .6; }
+.rl-paircols { display: grid; grid-template-columns: 1fr 1px 1fr; }
+.rl-paircol { padding: 10px 12px 12px; min-width: 0; }
+.rl-pairdiv { background: var(--rule); }
+.rl-pairwho {
+  font-size: 9px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; margin-bottom: 8px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.rl-pairstrip {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 1px; background: var(--rule-soft); border: 1px solid var(--rule-soft);
+}
+.rl-pairstrip .rl-cell { aspect-ratio: 1/1.14; padding: 5px; }
+/* ---- upload queue ---- */
+.rl-queue { border: 1px solid var(--rule-soft); }
+.rl-queuerow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; background: var(--paper);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.rl-queuerow:last-child { border-bottom: 0; }
+.rl-queuethumb {
+  width: 46px; height: 56px; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--rule-soft); background: var(--paper);
+}
+.rl-queuethumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.rl-queuethumb[data-note="true"] { border-color: var(--tag-deep); background: #FBF3E1; }
+.rl-queuename { flex: 1; min-width: 0; }
+.rl-queuename input { padding: 8px 11px; font-size: 13px; }
+.rl-queuedrop {
+  flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid var(--rule); background: transparent; color: var(--muted);
+  font-size: 14px; line-height: 1;
+}
+.rl-queuedrop:hover { border-color: var(--ink); color: var(--ink); }
+
+/* ---- calendar ---- */
+.rl-calbar {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+}
+.rl-calmonth {
+  font-family: 'Shippori Mincho', 'Hiragino Mincho ProN', Georgia, serif;
+  font-size: 22px; font-weight: 500; letter-spacing: .02em;
+}
+.rl-caldow {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px;
+  margin-bottom: 1px;
+}
+.rl-caldow span {
+  text-align: center; font-size: 9px; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--muted); padding: 6px 0;
+}
+.rl-calgrid {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px;
+  background: var(--rule-soft); border: 1px solid var(--rule-soft);
+}
+.rl-calcell {
+  background: var(--paper); min-height: 88px; padding: 4px 3px;
+  display: flex; flex-direction: column; gap: 2px; align-items: stretch;
+  border: 0; text-align: left; position: relative;
+}
+.rl-calcell[data-sel="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
+.rl-calmosaic {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+  margin-top: 1px;
+}
+.rl-calmosaic[data-one="true"] { grid-template-columns: 1fr; }
+.rl-calthumb {
+  aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.rl-calthumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+.rl-calday {
+  border: 1px solid var(--rule); background: var(--paper);
+  padding: 14px; margin-top: 18px;
+}
+.rl-caldayhead {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding-bottom: 10px; border-bottom: 1px solid var(--rule-soft); margin-bottom: 12px;
+}
+.rl-caldaylooks {
+  display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.rl-calcell[data-out="true"] { background: #F1EBE0; }
+.rl-calcell[data-trip="true"] { cursor: pointer; }
+.rl-calcell[data-trip="false"] { cursor: default; }
+.rl-caldate {
+  font-family: 'DM Mono', ui-monospace, monospace;
+  font-size: 10px; color: var(--muted); line-height: 1.4;
+}
+.rl-calcell[data-out="true"] .rl-caldate { opacity: .45; }
+.rl-caltoday {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--ink); color: var(--paper);
+}
+.rl-calband {
+  font-size: 8.5px; letter-spacing: .04em; padding: 2px 6px;
+  border-radius: 999px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; line-height: 1.5;
+  background: var(--ink); color: var(--paper);
+}
+.rl-calband[data-cont="true"] { background: var(--tag); color: var(--tag-ink); }
+.rl-caldots { display: flex; gap: 2px; flex-wrap: wrap; margin-top: auto; }
+.rl-caldot {
+  width: 5px; height: 5px; border-radius: 50%;
+  border: 1px solid var(--muted); background: transparent;
+}
+.rl-caldot[data-on="true"] { background: var(--ink); border-color: var(--ink); }
+.rl-callegend {
+  display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px;
+  font-size: 11px; color: var(--muted); align-items: center;
+}
+
+/* ---- carousel closet ---- */
+.rl-carwrap { position: relative; }
+.rl-car {
+  display: flex; gap: 1px; overflow-x: auto; scroll-snap-type: x mandatory;
+  background: var(--rule-soft); border: 1px solid var(--rule-soft); border-top: 0;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.rl-car::-webkit-scrollbar { display: none; }
+.rl-slide {
+  flex: 0 0 var(--slide, 124px); height: calc(var(--slide, 124px) * 1.2);
+  scroll-snap-align: start; background: var(--paper);
+  display: flex; align-items: center; justify-content: center;
+  padding: 10px; border: 0; position: relative;
+}
+.rl-slide img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.rl-slide[data-sel="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
+.rl-slide .rl-slidename {
+  position: absolute; left: 0; right: 0; bottom: 4px; text-align: center;
+  font-size: 9px; color: #B3A794; padding: 0 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rl-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 32px; height: 32px; border: 1px solid var(--ink); border-radius: 50%;
+  background: rgba(250,247,241,.95); color: var(--ink);
+  display: none; align-items: center; justify-content: center; font-size: 14px; z-index: 5;
+}
+@media (min-width: 760px) { .rl-carwrap:hover .rl-arrow { display: flex; } }
+.rl-arrow.l { left: 4px; }
+.rl-arrow.r { right: 4px; }
+
+/* ---- cleanup controls ---- */
+.rl-swatch {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px;
+}
+.rl-swatch figure { margin: 0; }
+.rl-swatch figcaption { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+.rl-swatchbox {
+  aspect-ratio: 1; border: 1px solid var(--rule); display: flex;
+  align-items: center; justify-content: center; padding: 8px;
+  background-color: var(--paper);
+  background-image: linear-gradient(45deg,#EFE9DE 25%,transparent 25%,transparent 75%,#EFE9DE 75%),
+                    linear-gradient(45deg,#EFE9DE 25%,transparent 25%,transparent 75%,#EFE9DE 75%);
+  background-size: 12px 12px; background-position: 0 0, 6px 6px;
+}
+.rl-swatchbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.rl-range { width: 100%; accent-color: var(--ink); }
+.rl-toggle {
+  display: flex; align-items: center; gap: 9px; padding: 10px 0;
+  font-size: 13px; cursor: pointer;
+}
+.rl-toggle input { width: 16px; height: 16px; accent-color: var(--ink); }
+.rl-warn {
+  background: var(--tag); color: var(--tag-ink); padding: 8px 10px;
+  font-size: 11.5px; line-height: 1.5; margin-top: 10px;
+}
+
+/* Kept on-page but visually hidden — Safari refuses to open the picker
+   for an input with display:none. A label drives it instead. */
+.rl-fileinput {
+  position: absolute; width: 1px; height: 1px;
+  opacity: 0; overflow: hidden; left: -9999px;
+}
+.rl-filebtn {
+  display: inline-block; text-align: center; cursor: pointer;
+  border: 1px solid var(--ink); background: var(--ink); color: var(--paper);
+  border-radius: 999px; padding: 13px 28px;
+  font-size: 11px; font-weight: 500; letter-spacing: .13em;
+  text-transform: uppercase;
+  transition: background .16s ease;
+}
+.rl-filebtn:hover { background: #3E3128; }
+.rl-filebtn:active { transform: translateY(1px); }
+.rl-filebtn:hover { background: #3E3128; border-color: #3E3128; }
+.rl-filebtn:active { transform: translateY(1px); }
+.rl-fileinput:focus-visible + .rl-filebtn { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* ---- look board (moodboard per day) ----
+   Pieces are sized by HEIGHT against a notional figure (--fig), not by
+   width, so a source image's own aspect ratio can't make a shirt taller
+   than a pair of trousers. Fractions approximate where each garment sits
+   on a body: torso ~26%, waist-to-floor ~44%, foot ~9%. */
+.rl-board {
+  --fig: 300px;
+  position: relative; background: var(--paper); border: 1px solid var(--rule-soft);
+  padding: 12px 8px 14px; min-height: 96px;
+}
+.rl-board-stack { display: flex; flex-direction: column; align-items: center; }
+.rl-board-row {
+  display: flex; align-items: flex-start; justify-content: center; width: 100%;
+}
+.rl-board-item {
+  background: none; border: 0; padding: 0; margin: 0;
+  display: inline-block; width: auto; line-height: 0;
+  position: relative; cursor: pointer;
+}
+.rl-board-item img {
+  display: block; height: 100%; width: auto; max-width: 100%; object-fit: contain;
+}
+.rl-board-item:hover::after {
+  content: "×"; position: absolute; top: -2px; right: -2px;
+  width: 16px; height: 16px; background: var(--ink); color: var(--paper);
+  border-radius: 50%; font-size: 10px; line-height: 16px; text-align: center; z-index: 6;
+}
+
+.rl-board-item[data-zone="outer"]       { height: calc(var(--fig) * 0.30); z-index: 1; }
+.rl-board-item[data-zone="outerLong"]   { height: calc(var(--fig) * 0.40); z-index: 1; }
+.rl-board-item[data-zone="top"]         { height: calc(var(--fig) * 0.26); z-index: 2; }
+.rl-board-item[data-zone="dress"]       { height: calc(var(--fig) * 0.46); }
+.rl-board-item[data-zone="bottomLong"]  { height: calc(var(--fig) * 0.44); }
+.rl-board-item[data-zone="bottomShort"] { height: calc(var(--fig) * 0.24); }
+
+/* A shoe's defining dimension is its length, not its height — sizing it
+   by height renders it as a sliver. */
+.rl-board-item[data-zone="shoes"] { width: calc(var(--fig) * 0.20); height: auto; }
+.rl-board-item[data-zone="shoes"] img { width: 100%; height: auto; }
+
+/* a top sitting in front of a jacket tucks well over its edge, and hangs
+   slightly lower than the shoulder line */
+.rl-board-item[data-layered="true"] {
+  margin-left: calc(var(--fig) * -0.20);
+  margin-top: calc(var(--fig) * 0.03);
+}
+
+.rl-board-mid   { margin-top: calc(var(--fig) * -0.015); }
+.rl-board-feet  { margin-top: calc(var(--fig) * 0.015); }
+
+.rl-board-accent {
+  position: absolute; right: 5px;
+  height: calc(var(--fig) * 0.15); z-index: 3;
+}
+.rl-board-empty {
+  border: 1px dashed var(--rule); background: transparent;
+  padding: 22px 10px; text-align: center; font-size: 10.5px; color: #B3A794;
+}
+
+.rl-pairnone {
+  font-size: 11px; color: #B3A794; padding: 12px 0; letter-spacing: .02em;
+}
+
+/* ---- swipe deck ---- */
+.rl-deck {
+  position: relative; height: 400px; background: #E4DACB;
+  border: 1px solid var(--rule);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; touch-action: none; user-select: none;
+}
+.rl-deckcard {
+  position: absolute; background: var(--paper); border: 1px solid var(--rule);
+  width: 208px; height: 320px; display: flex; flex-direction: column;
+}
+.rl-deckcard.top { cursor: grab; box-shadow: 0 2px 10px rgba(0,0,0,.09); }
+.rl-deckcard.top:active { cursor: grabbing; }
+.rl-deckart {
+  flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px;
+  overflow: hidden;
+}
+.rl-deckart img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.rl-deckcap { border-top: 1px solid var(--rule-soft); padding: 10px 12px; }
+.rl-deckstamp {
+  position: absolute; top: 14px; font-size: 10px; font-weight: 700;
+  letter-spacing: .16em; text-transform: uppercase; padding: 5px 9px;
+}
+.rl-deckstamp.keep { left: 14px; background: var(--ink); color: var(--paper); }
+.rl-deckstamp.skip { right: 14px; border: 1px solid var(--muted); color: var(--muted); background: var(--paper); }
+.rl-deckbar {
+  display: flex; gap: 12px; justify-content: center; align-items: center;
+  padding: 16px 0 4px;
+}
+.rl-deckbtn {
+  width: 46px; height: 46px; border: 1px solid var(--ink); border-radius: 50%;
+  background: var(--paper); color: var(--ink);
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+}
+.rl-deckbtn.fill { background: var(--ink); color: var(--paper); }
+.rl-deckbtn.small { width: 36px; height: 36px; font-size: 13px; border-color: var(--rule); color: var(--muted); }
+.rl-deckbtn:disabled { opacity: .3; cursor: not-allowed; }
+.rl-deckcount {
+  position: absolute; top: 12px; left: 0; right: 0; text-align: center;
+  font-size: 10px; letter-spacing: .14em; color: var(--muted); pointer-events: none;
+}
+
+/* ---- sheet / modal ---- */
+.rl-scrim {
+  position: fixed; inset: 0; background: rgba(20,20,15,.42); z-index: 60;
+  display: flex; align-items: flex-end; justify-content: center;
+}
+@media (min-width: 700px) { .rl-scrim { align-items: center; } }
+.rl-sheet {
+  background: var(--wall); width: 100%; max-width: 620px;
+  max-height: 88vh; display: flex; flex-direction: column;
+  border-top: 3px solid var(--ink);
+}
+@media (min-width: 700px) { .rl-sheet { border: 3px solid var(--ink); max-height: 84vh; } }
+.rl-sheethead {
+  padding: 16px 18px; border-bottom: 1px solid var(--rule);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--wall);
+}
+.rl-sheetbody { overflow-y: auto; padding: 18px; }
+.rl-sheetfoot {
+  padding: 12px 18px; border-top: 1px solid var(--rule);
+  display: flex; gap: 8px; align-items: center; justify-content: flex-end;
+  background: var(--wall);
+}
+
+/* ---- chips ---- */
+.rl-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.rl-chip {
+  border: 1px solid var(--rule); background: var(--paper); color: var(--muted);
+  border-radius: 999px; padding: 7px 15px;
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 500;
+  transition: background .16s ease, color .16s ease, border-color .16s ease;
+}
+.rl-chip:hover { color: var(--ink); border-color: var(--ink); }
+.rl-chip[data-on="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+/* ---- cards ---- */
+.rl-card {
+  background: var(--paper); border: 1px solid var(--rule);
+  padding: 16px; width: 100%; text-align: left; display: block;
+}
+.rl-card:hover { border-color: var(--ink); }
+
+.rl-empty {
+  border: 1px dashed var(--rule); background: transparent;
+  padding: 34px 20px; text-align: center; color: var(--muted); font-size: 13px;
+  line-height: 1.6;
+}
+
+.rl-packrow {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 0; border-bottom: 1px solid var(--rule-soft);
+}
+.rl-packbox {
+  width: 18px; height: 18px; border: 1px solid var(--ink); border-radius: 4px; background: var(--paper);
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--paper);
+}
+.rl-packbox[data-on="true"] { background: var(--ink); }
+.rl-packthumb {
+  width: 34px; height: 34px; flex: 0 0 auto; background: var(--paper);
+  border: 1px solid var(--rule-soft); display:flex; align-items:center; justify-content:center;
+}
+.rl-packthumb img { max-width: 92%; max-height: 92%; object-fit: contain; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .rl-fade { animation: rlfade .18s ease-out; }
+  @keyframes rlfade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+}
+`;
+
+/* ------------------------------------------------------------------ */
+/*  small components                                                   */
+/* ------------------------------------------------------------------ */
+
+function Sheet({ title, eyebrow, onClose, children, footer }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="rl-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="rl-sheet rl-fade" role="dialog" aria-modal="true">
+        <div className="rl-sheethead">
+          <div>
+            {eyebrow && <div className="rl-eyebrow" style={{ marginBottom: 3 }}>{eyebrow}</div>}
+            <div className="rl-display" style={{ fontSize: 20 }}>{title}</div>
+          </div>
+          <button className="rl-btn quiet tiny" onClick={onClose}>Close</button>
+        </div>
+        <div className="rl-sheetbody">{children}</div>
+        {footer && <div className="rl-sheetfoot">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+function Thumb({ item, onClick, selected, showOwner }) {
+  return (
+    <button
+      className="rl-cell"
+      data-sel={selected ? "true" : "false"}
+      onClick={onClick}
+      title={item.name || item.cat}
+    >
+      {item.img ? (
+        <img src={item.img} alt={item.name || item.cat} loading="lazy" />
+      ) : (
+        <span className="rl-eyebrow">No image</span>
+      )}
+      {selected && <span className="rl-check">✓</span>}
+      {showOwner && <span className="rl-owner">{OWNER_LABEL[item.owner]}</span>}
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  add pieces                                                         */
+/* ------------------------------------------------------------------ */
+
+function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd }) {
+  const [owner, setOwner] = useState(initialOwner);
+  const cats = closets[owner].cats;
+  const [cat, setCat] = useState(cats[0] || "Other");
+  const [newCat, setNewCat] = useState("");
+  const [showCatAdd, setShowCatAdd] = useState(false);
+  const [queue, setQueue] = useState([]); // {img, name, note}
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [removeBg, setRemoveBg] = useState(true);
+  const [tolerance, setTolerance] = useState(34);
+  const [lastFiles, setLastFiles] = useState([]);
+  const fileRef = useRef(null);
+  const inputId = useRef("rl-file-" + uid()).current;
+
+  const switchOwner = (o) => {
+    setOwner(o);
+    const list = closets[o].cats;
+    if (!list.includes(cat)) setCat(list[0] || "Other");
+    setShowCatAdd(false);
+    setNewCat("");
+  };
+
+  const addCategory = () => {
+    const c = newCat.trim();
+    if (!c) return;
+    if (!cats.includes(c)) {
+      setClosets((cs) => ({ ...cs, [owner]: { ...cs[owner], cats: [...cs[owner].cats, c] } }));
+    }
+    setCat(c);
+    setNewCat("");
+    setShowCatAdd(false);
+  };
+
+  const runFiles = async (files, tol, strip) => {
+    setBusy(`Cleaning up ${files.length} photo${files.length > 1 ? "s" : ""}…`);
+    setErr("");
+    const added = [];
+    for (const f of files) {
+      try {
+        const r = await processPhoto(f, { removeBg: strip, tolerance: tol });
+        added.push({ img: r.img, name: cleanName(f.name), note: r.note });
+      } catch (e) {
+        setErr(e.message);
+      }
+    }
+    setBusy("");
+    return added;
+  };
+
+  const onFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setLastFiles(files);
+    const added = await runFiles(files, tolerance, removeBg);
+    setQueue((q) => [...q, ...added]);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  /* Re-running cleanup replaces the last batch's images, but must keep
+     any names already typed for them. */
+  const redo = async () => {
+    if (!lastFiles.length) return;
+    const added = await runFiles(lastFiles, tolerance, removeBg);
+    setQueue((q) => {
+      const keep = q.slice(0, Math.max(0, q.length - lastFiles.length));
+      const previous = q.slice(Math.max(0, q.length - lastFiles.length));
+      const merged = added.map((a, i) => ({
+        ...a,
+        name: previous[i] && previous[i].name ? previous[i].name : a.name,
+      }));
+      return [...keep, ...merged];
+    });
+  };
+
+  const commit = () => {
+    if (!queue.length) return;
+    onAdd(
+      queue.map((q) => ({
+        id: uid(),
+        owner,
+        cat,
+        name: q.name || "",
+        img: q.img,
+        addedAt: Date.now(),
+      }))
+    );
+    onClose();
+  };
+
+  const notes = queue.filter((q) => q.note).length;
+
+  return (
+    <Sheet
+      title="Add pieces"
+      eyebrow={`${OWNER_LABEL[owner]}'s closet · ${cat}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="rl-mono" style={{ fontSize: 11, color: "var(--muted)", marginRight: "auto" }}>
+            {queue.length} ready
+          </span>
+          <button className="rl-btn ghost" onClick={onClose}>Cancel</button>
+          <button className="rl-btn" onClick={commit} disabled={!queue.length || !!busy}>
+            Add {queue.length || ""}
+          </button>
+        </>
+      }
+    >
+      <div className="rl-eyebrow" style={{ marginBottom: 8 }}>Whose closet</div>
+      <div className="rl-chips" style={{ marginBottom: 22 }}>
+        {["her", "his"].map((o) => (
+          <button key={o} className="rl-chip" data-on={owner === o ? "true" : "false"} onClick={() => switchOwner(o)}>
+            {OWNER_LABEL[o]}
+          </button>
+        ))}
+      </div>
+
+      <div className="rl-eyebrow" style={{ marginBottom: 8 }}>Category</div>
+      <div className="rl-chips" style={{ marginBottom: 10 }}>
+        {cats.map((c) => (
+          <button key={c} className="rl-chip" data-on={cat === c ? "true" : "false"} onClick={() => setCat(c)}>
+            {c}
+          </button>
+        ))}
+        {!showCatAdd && (
+          <button className="rl-chip" onClick={() => setShowCatAdd(true)}>+ New</button>
+        )}
+      </div>
+
+      {showCatAdd && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 18, maxWidth: 380 }}>
+          <input
+            className="rl-field"
+            autoFocus
+            value={newCat}
+            placeholder={`New category for ${OWNER_LABEL[owner]}`}
+            onChange={(e) => setNewCat(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addCategory();
+              if (e.key === "Escape") { setShowCatAdd(false); setNewCat(""); }
+            }}
+          />
+          <button className="rl-btn" onClick={addCategory} disabled={!newCat.trim()}>Add</button>
+          <button className="rl-btn ghost" onClick={() => { setShowCatAdd(false); setNewCat(""); }}>Cancel</button>
+        </div>
+      )}
+
+      <div className="rl-eyebrow" style={{ margin: "22px 0 4px" }}>Photos</div>
+
+      <label className="rl-toggle">
+        <input type="checkbox" checked={removeBg} onChange={(e) => setRemoveBg(e.target.checked)} />
+        <span>Remove the background and centre the item</span>
+      </label>
+
+      {removeBg && (
+        <div style={{ margin: "4px 0 14px" }}>
+          <div className="rl-eyebrow" style={{ marginBottom: 6 }}>
+            Strength — {tolerance}
+          </div>
+          <input
+            className="rl-range"
+            type="range"
+            min="12"
+            max="80"
+            value={tolerance}
+            onChange={(e) => setTolerance(Number(e.target.value))}
+          />
+          <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
+            Higher strips more. Too high eats into the garment; too low leaves a halo.
+            {lastFiles.length > 0 && (
+              <>
+                {" "}
+                <button className="rl-btn ghost tiny" style={{ marginTop: 8 }} onClick={redo} disabled={!!busy}>
+                  Redo last batch
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      <input
+        ref={fileRef}
+        id={inputId}
+        className="rl-fileinput"
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={onFiles}
+      />
+      <label htmlFor={inputId} className="rl-filebtn">
+        Choose photos
+      </label>
+
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 10, lineHeight: 1.55 }}>
+        Pick as many as you like at once. On iPhone, tap <strong>Photo Library</strong> in the menu
+        Safari shows — it can't be skipped, but it's always the first option.
+      </div>
+
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, lineHeight: 1.55 }}>
+        Works best on a garment laid flat on a plain floor, bed or table. It can't lift an item
+        off a person or out of a busy room — for those, photograph the piece by itself.
+      </div>
+
+      {busy && <div className="rl-eyebrow" style={{ marginTop: 12 }}>{busy}</div>}
+      {err && <div style={{ marginTop: 12, fontSize: 12, color: "var(--accent)" }}>{err}</div>}
+      {notes > 0 && (
+        <div className="rl-warn">
+          {notes} photo{notes > 1 ? "s" : ""} couldn't be cut out cleanly and {notes > 1 ? "were" : "was"} kept
+          as-is. Try raising the strength, or reshoot against a plainer background.
+        </div>
+      )}
+
+      {queue.length > 0 && (
+        <>
+          <div className="rl-railhead" style={{ marginTop: 26 }}>
+            <span className="rl-railname">Name your pieces</span>
+            <span className="rl-raildots" />
+            <span className="rl-railcount rl-mono">{String(queue.length).padStart(2, "0")}</span>
+          </div>
+
+          <div className="rl-queue">
+            {queue.map((q, i) => (
+              <div className="rl-queuerow" key={i}>
+                <span className="rl-queuethumb" data-note={q.note ? "true" : "false"} title={q.note || ""}>
+                  {q.img ? <img src={q.img} alt="" /> : null}
+                </span>
+                <span className="rl-queuename">
+                  <input
+                    className="rl-field"
+                    value={q.name}
+                    placeholder="Black silk slip, Toteme blazer…"
+                    onChange={(e) =>
+                      setQueue((cur) => cur.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))
+                    }
+                  />
+                </span>
+                <button
+                  className="rl-queuedrop"
+                  onClick={() => setQueue((cur) => cur.filter((_, j) => j !== i))}
+                  aria-label="Remove this photo"
+                  title="Remove"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, lineHeight: 1.5 }}>
+            Names are optional — anything left blank shows as its category.
+            These go to {OWNER_LABEL[owner]} · {cat}.
+            {notes > 0 && " An amber edge means that photo kept its background."}
+          </div>
+        </>
+      )}
+    </Sheet>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  item detail                                                        */
+/* ------------------------------------------------------------------ */
+
+function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
+  const [name, setName] = useState(item.name || "");
+  const [cat, setCat] = useState(item.cat);
+  const [confirm, setConfirm] = useState(false);
+
+  return (
+    <Sheet
+      title={name || "Untitled piece"}
+      eyebrow={`${OWNER_LABEL[item.owner]} · ${item.cat}`}
+      onClose={onClose}
+      footer={
+        <>
+          {confirm ? (
+            <>
+              <span style={{ fontSize: 12, marginRight: "auto", color: "var(--muted)" }}>
+                Remove from the closet and every trip?
+              </span>
+              <button className="rl-btn ghost" onClick={() => setConfirm(false)}>Keep</button>
+              <button className="rl-btn" onClick={() => { onDelete(item.id); onClose(); }}>
+                Remove
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="rl-btn quiet" style={{ marginRight: "auto" }} onClick={() => setConfirm(true)}>
+                Remove
+              </button>
+              <button className="rl-btn ghost" onClick={onClose}>Cancel</button>
+              <button className="rl-btn" onClick={() => { onSave({ ...item, name: name.trim(), cat }); onClose(); }}>
+                Save
+              </button>
+            </>
+          )}
+        </>
+      }
+    >
+      <div style={{ background: "#fff", border: "1px solid var(--rule)", padding: 24, display: "flex", justifyContent: "center", marginBottom: 22 }}>
+        {item.img ? (
+          <img src={item.img} alt="" style={{ maxHeight: 240, maxWidth: "100%", objectFit: "contain" }} />
+        ) : (
+          <span className="rl-eyebrow">No image</span>
+        )}
+      </div>
+
+      <div className="rl-eyebrow" style={{ marginBottom: 8 }}>Name</div>
+      <input
+        className="rl-field"
+        value={name}
+        placeholder="Black silk slip, Toteme blazer…"
+        onChange={(e) => setName(e.target.value)}
+      />
+
+      <div className="rl-eyebrow" style={{ margin: "22px 0 8px" }}>Category</div>
+      <div className="rl-chips">
+        {cats.map((c) => (
+          <button key={c} className="rl-chip" data-on={cat === c ? "true" : "false"} onClick={() => setCat(c)}>
+            {c}
+          </button>
+        ))}
+      </div>
+    </Sheet>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  closet                                                             */
+/* ------------------------------------------------------------------ */
+
+/* Works out where a piece sits on the body, from its category.
+   Distinguishes long from short so trousers aren't drawn the size of
+   shorts. Anything unrecognised is treated as a top rather than dropped. */
+function zoneOf(item) {
+  const c = ((item && item.cat) || "").toLowerCase();
+  const n = ((item && item.name) || "").toLowerCase();
+  const both = c + " " + n;
+  if (/coat|parka|trench|puffer/.test(both)) return "outerLong";
+  if (/outerwear|jacket|blazer|cardigan/.test(c)) return "outer";
+  if (/dress|gown|jumpsuit/.test(c)) return "dress";
+  if (/shoe|boot|sandal|sneaker|heel|loafer|flat|mule|trainer/.test(c)) return "shoes";
+  if (/bag|accessor|jewel|hat|belt|scarf|sunglass|clutch/.test(c)) return "accent";
+  if (/short|skirt|swim|bikini|bathing|trunk/.test(both)) return "bottomShort";
+  if (/bottom|trouser|jean|pant|legging|chino|slack/.test(c)) return "bottomLong";
+  return "top";
+}
+
+/* Which pieces best represent a look at thumbnail size. */
+const MOSAIC_ORDER = ["dress", "top", "outer", "outerLong", "bottomLong", "bottomShort", "shoes", "accent"];
+
+const IS_OUTER = (z) => z === "outer" || z === "outerLong";
+const IS_MID = (z) => z === "dress" || z === "bottomLong" || z === "bottomShort";
+
+function LookBoard({ items, onRemove, empty = "Nothing yet", fig }) {
+  if (!items.length) return <div className="rl-board-empty">{empty}</div>;
+
+  const zoned = items.map((it) => ({ it, z: zoneOf(it) }));
+  const outer = zoned.filter((x) => IS_OUTER(x.z));
+  const tops = zoned.filter((x) => x.z === "top");
+  const mids = zoned.filter((x) => IS_MID(x.z));
+  const feet = zoned.filter((x) => x.z === "shoes");
+  const accents = zoned.filter((x) => x.z === "accent");
+
+  const piece = ({ it, z }, extra) => (
+    <button
+      key={it.id}
+      className="rl-board-item"
+      data-zone={z}
+      onClick={() => onRemove && onRemove(it.id)}
+      title={it.name || it.cat}
+      {...extra}
+    >
+      {it.img ? <img src={it.img} alt={it.name || it.cat} loading="lazy" /> : null}
+    </button>
+  );
+
+  return (
+    <div className="rl-board" style={fig ? { "--fig": fig + "px" } : undefined}>
+      <div className="rl-board-stack">
+        {(outer.length > 0 || tops.length > 0) && (
+          <div className="rl-board-row">
+            {outer.map((x) => piece(x))}
+            {tops.map((x, i) =>
+              piece(x, outer.length > 0 && i === 0 ? { "data-layered": "true" } : {})
+            )}
+          </div>
+        )}
+        {mids.length > 0 && (
+          <div className="rl-board-row rl-board-mid">{mids.map((x) => piece(x))}</div>
+        )}
+        {feet.length > 0 && (
+          <div className="rl-board-row rl-board-feet">{feet.map((x) => piece(x))}</div>
+        )}
+      </div>
+      {accents.map((x, i) => (
+        <button
+          key={x.it.id}
+          className="rl-board-item rl-board-accent"
+          onClick={() => onRemove && onRemove(x.it.id)}
+          title={x.it.name || x.it.cat}
+          style={{ bottom: 10 + i * 34 }}
+        >
+          {x.it.img ? <img src={x.it.img} alt={x.it.name || x.it.cat} loading="lazy" /> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Carousel({ items, onPick, selected, size = 124 }) {
+  const ref = useRef(null);
+  const nudge = (dir) => {
+    const el = ref.current;
+    if (el) el.scrollBy({ left: dir * (size + 1) * 2, behavior: "smooth" });
+  };
+  return (
+    <div className="rl-carwrap">
+      <button className="rl-arrow l" onClick={() => nudge(-1)} aria-label="Back">‹</button>
+      <div className="rl-car" ref={ref} style={{ "--slide": size + "px" }}>
+        {items.map((it) => (
+          <button
+            key={it.id}
+            className="rl-slide"
+            data-sel={selected && selected.includes(it.id) ? "true" : "false"}
+            onClick={() => onPick(it)}
+            title={it.name || it.cat}
+          >
+            {it.img ? <img src={it.img} alt={it.name || it.cat} loading="lazy" /> : <span className="rl-eyebrow">No image</span>}
+            {it.name && <span className="rl-slidename">{it.name}</span>}
+          </button>
+        ))}
+      </div>
+      <button className="rl-arrow r" onClick={() => nudge(1)} aria-label="Forward">›</button>
+    </div>
+  );
+}
+
+function Closet({ closets, setClosets, openItem, openAdd }) {
+  const [owner, setOwner] = useState("her");
+  const [layout, setLayout] = useState("carousel");
+  const closet = closets[owner];
+  const [newCat, setNewCat] = useState("");
+  const [showCatAdd, setShowCatAdd] = useState(false);
+  const [recropping, setRecropping] = useState("");
+  const [recropNote, setRecropNote] = useState("");
+
+  const recrop = async () => {
+    const items = closet.items.filter((i) => i.img && i.img.indexOf("data:") === 0);
+    if (!items.length) {
+      setRecropNote("Nothing here to re-crop.");
+      return;
+    }
+    setRecropNote("");
+    const updates = {};
+    for (let i = 0; i < items.length; i++) {
+      setRecropping(`Re-cropping ${i + 1}/${items.length}`);
+      const next = await recropDataUrl(items[i].img);
+      if (next) updates[items[i].id] = next;
+    }
+    setRecropping("");
+    const n = Object.keys(updates).length;
+    if (!n) {
+      setRecropNote("These were already cropped tight.");
+      return;
+    }
+    setClosets((cs) => ({
+      ...cs,
+      [owner]: {
+        ...cs[owner],
+        items: cs[owner].items.map((it) => (updates[it.id] ? { ...it, img: updates[it.id] } : it)),
+      },
+    }));
+    setRecropNote(`Re-cropped ${n} piece${n > 1 ? "s" : ""}.`);
+  };
+
+  const grouped = useMemo(() => {
+    const m = {};
+    closet.cats.forEach((c) => (m[c] = []));
+    closet.items.forEach((it) => {
+      if (!m[it.cat]) m[it.cat] = [];
+      m[it.cat].push(it);
+    });
+    return m;
+  }, [closet]);
+
+  const total = closet.items.length;
+
+  const addCat = () => {
+    const c = newCat.trim();
+    if (!c || closet.cats.includes(c)) return;
+    setClosets((cs) => ({ ...cs, [owner]: { ...cs[owner], cats: [...cs[owner].cats, c] } }));
+    setNewCat("");
+    setShowCatAdd(false);
+  };
+
+  const renderRow = (c, items) => (
+    <section key={c} style={{ marginBottom: 34 }}>
+      <div className="rl-railhead">
+        <span className="rl-railname">{c}</span>
+        <span className="rl-raildots" />
+        <span className="rl-railcount rl-mono">{String(items.length).padStart(2, "0")}</span>
+      </div>
+      {layout === "carousel" ? (
+        <Carousel items={items} onPick={openItem} />
+      ) : (
+        <div className="rl-rack">
+          {items.map((it) => (
+            <Thumb key={it.id} item={it} onClick={() => openItem(it)} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
+        <div>
+          <div className="rl-eyebrow" style={{ marginBottom: 6 }}>Closet</div>
+          <div className="rl-chips">
+            {["her", "his"].map((o) => (
+              <button key={o} className="rl-chip" data-on={owner === o ? "true" : "false"} onClick={() => setOwner(o)}>
+                {OWNER_LABEL[o]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div className="rl-chips">
+            {[["carousel", "Carousel"], ["grid", "Grid"]].map(([k, l]) => (
+              <button key={k} className="rl-chip" data-on={layout === k ? "true" : "false"} onClick={() => setLayout(k)}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <span className="rl-mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+            {String(total).padStart(3, "0")}
+          </span>
+          <button className="rl-btn" onClick={() => openAdd(owner)}>Add pieces</button>
+        </div>
+      </div>
+
+      {total === 0 && (
+        <div className="rl-empty">
+          {OWNER_LABEL[owner]}'s closet is empty.
+          <br />
+          Add pieces by uploading photos from your phone.
+        </div>
+      )}
+
+      {closet.cats.map((c) => {
+        const items = grouped[c] || [];
+        if (!items.length) return null;
+        return renderRow(c, items);
+      })}
+
+      {Object.keys(grouped)
+        .filter((c) => !closet.cats.includes(c) && grouped[c].length)
+        .map((c) => renderRow(c, grouped[c]))}
+
+      <div style={{ marginTop: 30, borderTop: "1px solid var(--rule)", paddingTop: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        {showCatAdd ? (
+          <div style={{ display: "flex", gap: 8, maxWidth: 380 }}>
+            <input
+              className="rl-field"
+              autoFocus
+              value={newCat}
+              placeholder="New category name"
+              onChange={(e) => setNewCat(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addCat()}
+            />
+            <button className="rl-btn" onClick={addCat}>Add</button>
+            <button className="rl-btn ghost" onClick={() => setShowCatAdd(false)}>Cancel</button>
+          </div>
+        ) : (
+          <>
+            <button className="rl-btn quiet tiny" onClick={() => setShowCatAdd(true)}>
+              New category
+            </button>
+            {JSON.stringify(closet.cats) !== JSON.stringify(DEFAULT_CATS[owner]) && (
+              <button
+                className="rl-btn quiet tiny"
+                onClick={() => {
+                  setClosets((cs) => ({ ...cs, [owner]: { ...cs[owner], cats: DEFAULT_CATS[owner] } }));
+                  setRecropNote("Categories reset. Any piece filed elsewhere still shows, listed under its own heading.");
+                }}
+              >
+                Use standard categories
+              </button>
+            )}
+            {total > 0 && (
+              <button className="rl-btn quiet tiny" onClick={recrop} disabled={!!recropping}>
+                {recropping || "Re-crop photos"}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+      {recropNote && (
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 8, lineHeight: 1.5 }}>
+          {recropNote}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  picker                                                             */
+/* ------------------------------------------------------------------ */
+
+function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lockOwner, onClose, onConfirm }) {
+  const [owner, setOwner] = useState(lockOwner || "her");
+  const [sel, setSel] = useState(initial);
+  const [tab, setTab] = useState("closet");
+  const closet = closets[owner];
+
+  const toggle = (id) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+
+  const grouped = useMemo(() => {
+    const m = {};
+    closet.items.forEach((it) => {
+      (m[it.cat] = m[it.cat] || []).push(it);
+    });
+    return m;
+  }, [closet]);
+
+  const ownerOutfits = outfits.filter((o) => o.owner === owner);
+
+  /* ---- deck ---- */
+  const [deckCat, setDeckCat] = useState("all");
+  const [deckIdx, setDeckIdx] = useState(0);
+  const [drag, setDrag] = useState({ x: 0, y: 0, live: false });
+  const dragFrom = useRef(null);
+
+  const deckList = useMemo(
+    () => closet.items.filter((it) => deckCat === "all" || it.cat === deckCat),
+    [closet.items, deckCat]
+  );
+
+  useEffect(() => {
+    setDeckIdx(0);
+    setDrag({ x: 0, y: 0, live: false });
+  }, [owner, deckCat, tab]);
+
+  const decide = (keep) => {
+    const it = deckList[deckIdx];
+    if (it) {
+      setSel((s) =>
+        keep ? (s.includes(it.id) ? s : [...s, it.id]) : s.filter((x) => x !== it.id)
+      );
+    }
+    setDeckIdx((i) => i + 1);
+    setDrag({ x: 0, y: 0, live: false });
+  };
+
+  const onDown = (e) => {
+    dragFrom.current = { x: e.clientX, y: e.clientY };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    setDrag({ x: 0, y: 0, live: true });
+  };
+  const onMove = (e) => {
+    if (!dragFrom.current) return;
+    setDrag({ x: e.clientX - dragFrom.current.x, y: e.clientY - dragFrom.current.y, live: true });
+  };
+  const onUp = (e) => {
+    if (!dragFrom.current) return;
+    const dx = e.clientX - dragFrom.current.x;
+    dragFrom.current = null;
+    if (Math.abs(dx) > 84) decide(dx > 0);
+    else setDrag({ x: 0, y: 0, live: false });
+  };
+
+  return (
+    <Sheet
+      title={title}
+      eyebrow={eyebrow}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="rl-mono" style={{ fontSize: 11, color: "var(--muted)", marginRight: "auto" }}>
+            {sel.length} selected
+          </span>
+          <button className="rl-btn ghost" onClick={onClose}>Cancel</button>
+          <button className="rl-btn" onClick={() => { onConfirm(sel); onClose(); }}>Done</button>
+        </>
+      }
+    >
+      <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+        {lockOwner ? (
+          <span className="rl-eyebrow" style={{ alignSelf: "center" }}>
+            {OWNER_LABEL[lockOwner]}'s closet
+          </span>
+        ) : (
+          <div className="rl-chips">
+            {["her", "his"].map((o) => (
+              <button key={o} className="rl-chip" data-on={owner === o ? "true" : "false"} onClick={() => setOwner(o)}>
+                {OWNER_LABEL[o]}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="rl-chips" style={{ marginLeft: "auto" }}>
+          {[["closet", "Pieces"], ["outfits", "Outfits"], ["deck", "Deck"]].map(([k, l]) => (
+            <button key={k} className="rl-chip" data-on={tab === k ? "true" : "false"} onClick={() => setTab(k)}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab === "closet" && (
+        <>
+          {closet.items.length === 0 && <div className="rl-empty">Nothing in this closet yet.</div>}
+          {Object.keys(grouped).map((c) => (
+            <section key={c} style={{ marginBottom: 24 }}>
+              <div className="rl-railhead">
+                <span className="rl-railname">{c}</span>
+                <span className="rl-raildots" />
+                <span className="rl-railcount rl-mono">{String(grouped[c].length).padStart(2, "0")}</span>
+              </div>
+              <div className="rl-rack">
+                {grouped[c].map((it) => (
+                  <Thumb key={it.id} item={it} selected={sel.includes(it.id)} onClick={() => toggle(it.id)} />
+                ))}
+              </div>
+            </section>
+          ))}
+        </>
+      )}
+
+      {tab === "deck" && (() => {
+        const cats = Array.from(new Set(closet.items.map((i) => i.cat)));
+        const cur = deckList[deckIdx];
+        const next = deckList[deckIdx + 1];
+        const after = deckList[deckIdx + 2];
+        const dx = drag.x;
+        const stamp = dx > 40 ? "keep" : dx < -40 ? "skip" : null;
+
+        return (
+          <>
+            <div className="rl-chips" style={{ marginBottom: 14 }}>
+              <button className="rl-chip" data-on={deckCat === "all" ? "true" : "false"} onClick={() => setDeckCat("all")}>
+                Everything
+              </button>
+              {cats.map((c) => (
+                <button key={c} className="rl-chip" data-on={deckCat === c ? "true" : "false"} onClick={() => setDeckCat(c)}>
+                  {c}
+                </button>
+              ))}
+            </div>
+
+            {deckList.length === 0 ? (
+              <div className="rl-empty">Nothing here to deal. Try another category.</div>
+            ) : !cur ? (
+              <div className="rl-empty" style={{ padding: "46px 20px" }}>
+                That's the whole {deckCat === "all" ? "closet" : deckCat.toLowerCase()}.
+                <br />
+                <span className="rl-mono" style={{ fontSize: 13, color: "var(--ink)" }}>
+                  {sel.length} pieces in the look
+                </span>
+                <br />
+                <button className="rl-btn ghost tiny" style={{ marginTop: 14 }} onClick={() => setDeckIdx(0)}>
+                  Deal again
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="rl-deck">
+                  <span className="rl-deckcount rl-mono">
+                    {deckIdx + 1} / {deckList.length}
+                  </span>
+
+                  {after && (
+                    <div className="rl-deckcard" style={{ transform: "rotate(-3.5deg) translateX(-8px)", opacity: 0.3 }} />
+                  )}
+                  {next && (
+                    <div className="rl-deckcard" style={{ transform: "rotate(2deg) translateX(5px)", opacity: 0.55 }} />
+                  )}
+
+                  <div
+                    className="rl-deckcard top"
+                    onPointerDown={onDown}
+                    onPointerMove={onMove}
+                    onPointerUp={onUp}
+                    onPointerCancel={onUp}
+                    style={{
+                      transform: `translate(${dx}px, ${drag.y * 0.25}px) rotate(${dx / 20}deg)`,
+                      transition: drag.live ? "none" : "transform .18s ease-out",
+                    }}
+                  >
+                    {stamp === "keep" && <span className="rl-deckstamp keep">In the look</span>}
+                    {stamp === "skip" && <span className="rl-deckstamp skip">Skip</span>}
+                    <div className="rl-deckart">
+                      {cur.img ? <img src={cur.img} alt="" draggable="false" /> : <span className="rl-eyebrow">No image</span>}
+                    </div>
+                    <div className="rl-deckcap">
+                      <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>
+                        {cur.name || cur.cat}
+                      </div>
+                      <div className="rl-eyebrow" style={{ marginTop: 4 }}>
+                        {OWNER_LABEL[cur.owner]} · {cur.cat}
+                        {sel.includes(cur.id) ? " · already in" : ""}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rl-deckbar">
+                  <button className="rl-deckbtn" onClick={() => decide(false)} aria-label="Skip">✕</button>
+                  <button
+                    className="rl-deckbtn small"
+                    onClick={() => setDeckIdx((i) => Math.max(0, i - 1))}
+                    disabled={deckIdx === 0}
+                    aria-label="Back one"
+                  >
+                    ↺
+                  </button>
+                  <button className="rl-deckbtn fill" onClick={() => decide(true)} aria-label="Add to look">✓</button>
+                </div>
+                <div style={{ textAlign: "center", fontSize: 11, color: "var(--muted)", marginTop: 8 }}>
+                  Drag the card, or use the buttons. {sel.length} in the look so far.
+                </div>
+              </>
+            )}
+          </>
+        );
+      })()}
+
+      {tab === "outfits" && (
+        <>
+          {ownerOutfits.length === 0 && (
+            <div className="rl-empty">No saved outfits for {OWNER_LABEL[owner]} yet. Build one under Outfits.</div>
+          )}
+          {ownerOutfits.map((o) => {
+            const pieces = o.items.map((id) => allItems[id]).filter(Boolean);
+            const allIn = pieces.length > 0 && pieces.every((p) => sel.includes(p.id));
+            return (
+              <div key={o.id} style={{ marginBottom: 20 }}>
+                <div className="rl-railhead">
+                  <span className="rl-railname">{o.name}</span>
+                  <span className="rl-raildots" />
+                  <button
+                    className="rl-btn ghost tiny"
+                    onClick={() =>
+                      setSel((s) =>
+                        allIn
+                          ? s.filter((id) => !o.items.includes(id))
+                          : Array.from(new Set([...s, ...o.items]))
+                      )
+                    }
+                  >
+                    {allIn ? "Remove" : "Add all"}
+                  </button>
+                </div>
+                <div className="rl-rack">
+                  {pieces.map((p) => (
+                    <Thumb key={p.id} item={p} selected={sel.includes(p.id)} onClick={() => toggle(p.id)} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </Sheet>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  outfits                                                            */
+/* ------------------------------------------------------------------ */
+
+function Outfits({ closets, outfits, setOutfits, allItems }) {
+  const [building, setBuilding] = useState(null); // {id?, owner, name, items}
+  const [picking, setPicking] = useState(false);
+
+  const start = (owner) => setBuilding({ owner, name: "", items: [] });
+
+  const save = () => {
+    const b = building;
+    if (!b.items.length) return;
+    const name = b.name.trim() || "Untitled look";
+    setOutfits((os) => {
+      if (b.id) return os.map((o) => (o.id === b.id ? { ...o, name, items: b.items } : o));
+      return [...os, { id: uid(), owner: b.owner, name, items: b.items }];
+    });
+    setBuilding(null);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
+        <div>
+          <div className="rl-eyebrow" style={{ marginBottom: 4 }}>Saved looks</div>
+          <div className="rl-display" style={{ fontSize: 26 }}>Outfits</div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="rl-btn ghost" onClick={() => start("her")}>New for her</button>
+          <button className="rl-btn ghost" onClick={() => start("his")}>New for him</button>
+        </div>
+      </div>
+
+      {outfits.length === 0 && (
+        <div className="rl-empty">
+          No outfits yet.
+          <br />
+          Group pieces you always wear together, then drop the whole look onto a trip day.
+        </div>
+      )}
+
+      <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
+        {outfits.map((o) => {
+          const pieces = o.items.map((id) => allItems[id]).filter(Boolean);
+          return (
+            <div key={o.id} style={{ background: "#fff", border: "1px solid var(--rule)" }}>
+              <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--rule-soft)", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                <div>
+                  <div className="rl-eyebrow">{OWNER_LABEL[o.owner]}</div>
+                  <div style={{ fontWeight: 600, fontSize: 15 }}>{o.name}</div>
+                </div>
+                <span className="rl-mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {String(pieces.length).padStart(2, "0")}
+                </span>
+              </div>
+              <div className="rl-rack" style={{ border: 0 }}>
+                {pieces.map((p) => (
+                  <Thumb key={p.id} item={p} onClick={() => setBuilding({ ...o })} />
+                ))}
+              </div>
+              <div style={{ padding: 10, display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                <button className="rl-btn quiet tiny" onClick={() => setOutfits((os) => os.filter((x) => x.id !== o.id))}>
+                  Delete
+                </button>
+                <button className="rl-btn ghost tiny" onClick={() => setBuilding({ ...o })}>Edit</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {building && (
+        <Sheet
+          title={building.id ? "Edit outfit" : `New outfit — ${OWNER_LABEL[building.owner]}`}
+          eyebrow="Look"
+          onClose={() => setBuilding(null)}
+          footer={
+            <>
+              <button className="rl-btn ghost" onClick={() => setBuilding(null)}>Cancel</button>
+              <button className="rl-btn" onClick={save} disabled={!building.items.length}>Save outfit</button>
+            </>
+          }
+        >
+          <div className="rl-eyebrow" style={{ marginBottom: 8 }}>Name</div>
+          <input
+            className="rl-field"
+            value={building.name}
+            placeholder="Dinner in Gstaad, Airport day…"
+            onChange={(e) => setBuilding((b) => ({ ...b, name: e.target.value }))}
+          />
+
+          <div className="rl-railhead" style={{ marginTop: 24 }}>
+            <span className="rl-railname">Pieces</span>
+            <span className="rl-raildots" />
+            <button className="rl-btn ghost tiny" onClick={() => setPicking(true)}>Choose</button>
+          </div>
+          {building.items.length === 0 ? (
+            <div className="rl-empty" style={{ borderTop: 0 }}>Nothing chosen yet.</div>
+          ) : (
+            <div className="rl-rack">
+              {building.items.map((id) => allItems[id]).filter(Boolean).map((p) => (
+                <Thumb
+                  key={p.id}
+                  item={p}
+                  showOwner
+                  onClick={() => setBuilding((b) => ({ ...b, items: b.items.filter((x) => x !== p.id) }))}
+                />
+              ))}
+            </div>
+          )}
+        </Sheet>
+      )}
+
+      {picking && building && (
+        <Picker
+          closets={closets}
+          outfits={[]}
+          allItems={allItems}
+          title="Choose pieces"
+          eyebrow={building.name || "Outfit"}
+          initial={building.items}
+          onClose={() => setPicking(false)}
+          onConfirm={(ids) => setBuilding((b) => ({ ...b, items: ids }))}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  trips                                                              */
+/* ------------------------------------------------------------------ */
+
+/* Builds the weeks of a month as a Monday-first grid, including the
+   leading and trailing days that fill out the first and last rows. */
+function monthMatrix(year, month) {
+  const first = new Date(year, month, 1);
+  const startOffset = (first.getDay() + 6) % 7; // Monday = 0
+  const total = new Date(year, month + 1, 0).getDate();
+  const rows = Math.ceil((startOffset + total) / 7);
+  const weeks = [];
+  const cur = new Date(year, month, 1 - startOffset);
+  for (let w = 0; w < rows; w++) {
+    const row = [];
+    for (let d = 0; d < 7; d++) {
+      row.push(new Date(cur));
+      cur.setDate(cur.getDate() + 1);
+    }
+    weeks.push(row);
+  }
+  return weeks;
+}
+
+const MONTH_FULL = ["January","February","March","April","May","June",
+                    "July","August","September","October","November","December"];
+const DOW_SHORT = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+
+function TripCalendar({ trips, allItems, onOpen }) {
+  const today = new Date();
+  const todayKey = toYMD(today);
+  const [selected, setSelected] = useState(null);
+
+  /* open on the month of the next trip, else the most recent, else now */
+  const initial = useMemo(() => {
+    const upcoming = trips
+      .filter((t) => t.end >= todayKey)
+      .sort((a, b) => (a.start < b.start ? -1 : 1))[0];
+    const fallback = trips.slice().sort((a, b) => (a.start < b.start ? 1 : -1))[0];
+    const anchor = upcoming || fallback;
+    const d = anchor ? parseYMD(anchor.start) : today;
+    return { y: d.getFullYear(), m: d.getMonth() };
+  }, [trips, todayKey]);
+
+  const [cursor, setCursor] = useState(initial);
+  const weeks = monthMatrix(cursor.y, cursor.m);
+
+  const shift = (n) => {
+    const d = new Date(cursor.y, cursor.m + n, 1);
+    setCursor({ y: d.getFullYear(), m: d.getMonth() });
+  };
+
+  /* every day of every trip, keyed by date */
+  const byDate = useMemo(() => {
+    const m = {};
+    trips.forEach((t) => {
+      t.days.forEach((d) => {
+        (m[d.date] = m[d.date] || []).push({ trip: t, day: d });
+      });
+    });
+    return m;
+  }, [trips]);
+
+  const monthTrips = trips.filter((t) => {
+    const s = parseYMD(t.start), e = parseYMD(t.end || t.start);
+    const a = new Date(cursor.y, cursor.m, 1), b = new Date(cursor.y, cursor.m + 1, 0);
+    return s <= b && e >= a;
+  });
+
+  return (
+    <div>
+      <div className="rl-calbar">
+        <button className="rl-btn quiet tiny" onClick={() => shift(-1)} aria-label="Previous month">‹</button>
+        <span className="rl-calmonth">
+          {MONTH_FULL[cursor.m]} {cursor.y}
+        </span>
+        <button className="rl-btn quiet tiny" onClick={() => shift(1)} aria-label="Next month">›</button>
+        <button
+          className="rl-btn quiet tiny"
+          style={{ marginLeft: "auto" }}
+          onClick={() => setCursor({ y: today.getFullYear(), m: today.getMonth() })}
+        >
+          Today
+        </button>
+      </div>
+
+      <div className="rl-caldow">
+        {DOW_SHORT.map((d) => <span key={d}>{d}</span>)}
+      </div>
+
+      <div className="rl-calgrid">
+        {weeks.map((week, wi) =>
+          week.map((date, di) => {
+            const key = toYMD(date);
+            const outside = date.getMonth() !== cursor.m;
+            const entries = byDate[key] || [];
+            const has = entries.length > 0;
+            return (
+              <button
+                key={key + wi + di}
+                className="rl-calcell"
+                data-out={outside ? "true" : "false"}
+                data-trip={has ? "true" : "false"}
+                data-sel={selected === key ? "true" : "false"}
+                onClick={() => has && setSelected(selected === key ? null : key)}
+                title={has ? entries.map((e) => e.trip.name).join(", ") : ""}
+              >
+                <span className="rl-caldate">
+                  {key === todayKey ? (
+                    <span className="rl-caltoday">{date.getDate()}</span>
+                  ) : (
+                    date.getDate()
+                  )}
+                </span>
+
+                {entries.map(({ trip, day }, i) => {
+                  const isStart = trip.start === key;
+                  const showName = isStart || di === 0;
+                  return (
+                    <span
+                      key={trip.id + i}
+                      className="rl-calband"
+                      data-cont={isStart ? "false" : "true"}
+                    >
+                      {showName ? trip.name : "·"}
+                    </span>
+                  );
+                })}
+
+                {has && (() => {
+                  const worn = [];
+                  entries.forEach(({ day }) =>
+                    day.slots.forEach((id) => {
+                      const it = allItems[id];
+                      if (it && !worn.some((w) => w.id === it.id)) worn.push(it);
+                    })
+                  );
+                  if (!worn.length) {
+                    return (
+                      <span className="rl-caldots">
+                        {entries.map(({ trip }, i) => (
+                          <span key={trip.id + "d" + i} className="rl-caldot" />
+                        ))}
+                      </span>
+                    );
+                  }
+                  const hero = worn
+                    .slice()
+                    .sort((a, b) => MOSAIC_ORDER.indexOf(zoneOf(a)) - MOSAIC_ORDER.indexOf(zoneOf(b)))
+                    .slice(0, 4);
+                  return (
+                    <span className="rl-calmosaic" data-one={hero.length === 1 ? "true" : "false"}>
+                      {hero.map((it) => (
+                        <span key={it.id} className="rl-calthumb">
+                          {it.img ? <img src={it.img} alt="" loading="lazy" /> : null}
+                        </span>
+                      ))}
+                    </span>
+                  );
+                })()}
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      {(() => {
+        const entries = selected ? (byDate[selected] || []) : [];
+        if (!selected || !entries.length) {
+          return (
+            <div className="rl-callegend">
+              <span className="rl-caldot" /> a day with no look yet · tap any day to see it
+            </div>
+          );
+        }
+        return (
+          <div className="rl-calday">
+            {entries.map(({ trip, day }) => {
+              const worn = day.slots.map((id) => allItems[id]).filter(Boolean);
+              const her = worn.filter((it) => it.owner === "her");
+              const his = worn.filter((it) => it.owner === "his");
+              return (
+                <div key={trip.id + day.id} style={{ marginBottom: 8 }}>
+                  <div className="rl-caldayhead">
+                    <span className="rl-display" style={{ fontSize: 19 }}>{trip.name}</span>
+                    <span className="rl-eyebrow">
+                      {dayLabel(day.date)} {dayNum(day.date)}
+                    </span>
+                    <button
+                      className="rl-btn ghost tiny"
+                      style={{ marginLeft: "auto" }}
+                      onClick={() => onOpen(trip.id)}
+                    >
+                      Open trip
+                    </button>
+                  </div>
+
+                  {day.events.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                      {day.events.map((ev, i) => (
+                        <span
+                          key={i}
+                          style={{
+                            background: "var(--tag)", color: "var(--tag-ink)",
+                            fontSize: 11, padding: "4px 10px", borderRadius: 999,
+                          }}
+                        >
+                          {ev}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {worn.length === 0 ? (
+                    <div className="rl-board-empty">
+                      Nothing planned for this day yet.
+                    </div>
+                  ) : (
+                    <div className="rl-caldaylooks">
+                      {[["her", her], ["his", his]].map(([o, list]) =>
+                        list.length ? (
+                          <div key={o}>
+                            <div className="rl-eyebrow" style={{ marginBottom: 6 }}>
+                              {OWNER_LABEL[o]}
+                            </div>
+                            <LookBoard items={list} fig={230} />
+                          </div>
+                        ) : null
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
+      {monthTrips.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          {monthTrips.map((t) => {
+            const planned = t.days.filter((d) => d.slots.length).length;
+            return (
+              <button
+                key={t.id}
+                className="rl-packrow"
+                style={{ width: "100%", background: "none", border: 0, borderBottom: "1px solid var(--rule-soft)", textAlign: "left" }}
+                onClick={() => onOpen(t.id)}
+              >
+                <span style={{ flex: 1, fontSize: 14 }}>{t.name}</span>
+                <span className="rl-mono" style={{ fontSize: 10, color: "var(--muted)" }}>
+                  {rangeLabel(t.start, t.end)} · {planned}/{t.days.length} dressed
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TripList({ trips, setTrips, allItems, onOpen }) {
+  const [creating, setCreating] = useState(false);
+  const [mode, setMode] = useState("list");
+  const [form, setForm] = useState({ name: "", start: "", end: "" });
+
+  const create = () => {
+    const name = form.name.trim();
+    if (!name || !form.start) return;
+    const days = daysBetween(form.start, form.end || form.start).map((d) => ({
+      id: uid(),
+      date: d,
+      events: [],
+      slots: [],
+      note: "",
+    }));
+    const trip = { id: uid(), name, start: form.start, end: form.end || form.start, days, packed: {} };
+    setTrips((t) => [...t, trip]);
+    setCreating(false);
+    setForm({ name: "", start: "", end: "" });
+    onOpen(trip.id);
+  };
+
+  const sorted = [...trips].sort((a, b) => (a.start < b.start ? -1 : 1));
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
+        <div>
+          <div className="rl-eyebrow" style={{ marginBottom: 4 }}>Shared</div>
+          <div className="rl-display" style={{ fontSize: 26 }}>Trips</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div className="rl-chips">
+            {[["list", "List"], ["calendar", "Calendar"]].map(([k, l]) => (
+              <button key={k} className="rl-chip" data-on={mode === k ? "true" : "false"} onClick={() => setMode(k)}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <button className="rl-btn" onClick={() => setCreating(true)}>New trip</button>
+        </div>
+      </div>
+
+      {trips.length === 0 && (
+        <div className="rl-empty">
+          No trips planned.
+          <br />
+          Start one and you'll get a hanging tag for every day of it.
+        </div>
+      )}
+
+      {trips.length > 0 && mode === "calendar" && (
+        <TripCalendar trips={trips} allItems={allItems} onOpen={onOpen} />
+      )}
+
+      {mode === "list" && (
+      <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+        {sorted.map((t) => {
+          const pieces = new Set();
+          t.days.forEach((d) => d.slots.forEach((s) => pieces.add(s)));
+          const preview = Array.from(pieces).map((id) => allItems[id]).filter(Boolean).slice(0, 6);
+          return (
+            <button key={t.id} className="rl-card" onClick={() => onOpen(t.id)}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+                <div className="rl-display" style={{ fontSize: 21 }}>{t.name}</div>
+                <span className="rl-mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {String(t.days.length).padStart(2, "0")}D
+                </span>
+              </div>
+              <div className="rl-eyebrow" style={{ marginTop: 6 }}>
+                {rangeLabel(t.start, t.end)} · {pieces.size} pieces
+              </div>
+              {preview.length > 0 && (
+                <div style={{ display: "flex", gap: 6, marginTop: 14, alignItems: "flex-end", height: 46 }}>
+                  {preview.map((p) => (
+                    <img key={p.id} src={p.img} alt="" style={{ height: 44, width: 34, objectFit: "contain" }} />
+                  ))}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      )}
+
+      {creating && (
+        <Sheet
+          title="New trip"
+          eyebrow="Where to"
+          onClose={() => setCreating(false)}
+          footer={
+            <>
+              <button className="rl-btn ghost" onClick={() => setCreating(false)}>Cancel</button>
+              <button className="rl-btn" onClick={create} disabled={!form.name.trim() || !form.start}>
+                Create trip
+              </button>
+            </>
+          }
+        >
+          <div className="rl-eyebrow" style={{ marginBottom: 8 }}>Destination</div>
+          <input
+            className="rl-field"
+            autoFocus
+            value={form.name}
+            placeholder="Menorca, Gstaad, Madrid…"
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          />
+          <div style={{ display: "flex", gap: 12, marginTop: 22 }}>
+            <div style={{ flex: 1 }}>
+              <div className="rl-eyebrow" style={{ marginBottom: 8 }}>First day</div>
+              <input
+                type="date"
+                className="rl-field"
+                value={form.start}
+                onChange={(e) => setForm((f) => ({ ...f, start: e.target.value }))}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className="rl-eyebrow" style={{ marginBottom: 8 }}>Last day</div>
+              <input
+                type="date"
+                className="rl-field"
+                value={form.end}
+                min={form.start}
+                onChange={(e) => setForm((f) => ({ ...f, end: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 10, lineHeight: 1.5 }}>
+            You'll get one tag per day. Travel days included — those usually need the most thought.
+          </div>
+        </Sheet>
+      )}
+    </div>
+  );
+}
+
+function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, onBack }) {
+  const [tab, setTab] = useState("days");
+  const [picking, setPicking] = useState(null); // { dayId, owner? }
+  const [eventFor, setEventFor] = useState(null);
+  const [eventText, setEventText] = useState("");
+  const [confirmDel, setConfirmDel] = useState(false);
+
+  const setDay = (dayId, patch) =>
+    updateTrip({ ...trip, days: trip.days.map((d) => (d.id === dayId ? { ...d, ...patch } : d)) });
+
+  const addDay = () => {
+    const last = trip.days[trip.days.length - 1];
+    const base = last ? parseYMD(last.date) : new Date();
+    base.setDate(base.getDate() + 1);
+    const date = toYMD(base);
+    updateTrip({
+      ...trip,
+      end: date,
+      days: [...trip.days, { id: uid(), date, events: [], slots: [], note: "" }],
+    });
+  };
+
+  const removeDay = (dayId) =>
+    updateTrip({ ...trip, days: trip.days.filter((d) => d.id !== dayId) });
+
+  const pieceIds = useMemo(() => {
+    const s = [];
+    trip.days.forEach((d) => d.slots.forEach((id) => { if (!s.includes(id)) s.push(id); }));
+    return s;
+  }, [trip]);
+
+  const packing = useMemo(() => {
+    const groups = {};
+    pieceIds.forEach((id) => {
+      const it = allItems[id];
+      if (!it) return;
+      const key = `${it.owner}|${it.cat}`;
+      (groups[key] = groups[key] || []).push(it);
+    });
+    return groups;
+  }, [pieceIds, allItems]);
+
+  const packedCount = pieceIds.filter((id) => trip.packed && trip.packed[id]).length;
+
+  return (
+    <div>
+      <button className="rl-btn quiet tiny" onClick={onBack} style={{ marginBottom: 18 }}>
+        ← All trips
+      </button>
+
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <div className="rl-eyebrow" style={{ marginBottom: 4 }}>
+            {rangeLabel(trip.start, trip.end)} · {trip.days.length} days · {pieceIds.length} pieces
+          </div>
+          <div className="rl-display" style={{ fontSize: 38 }}>{trip.name}</div>
+        </div>
+        <div className="rl-chips">
+          {[["days", "Days"], ["pair", "Both"], ["packing", `Packing ${packedCount}/${pieceIds.length}`]].map(([k, l]) => (
+            <button key={k} className="rl-chip" data-on={tab === k ? "true" : "false"} onClick={() => setTab(k)}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ borderTop: "1px solid var(--ink)", marginTop: 16 }} />
+
+      {tab === "days" && (
+        <>
+          <div className="rl-days">
+            {trip.days.map((d) => (
+              <div key={d.id} className="rl-day">
+                <div style={{ textAlign: "center", marginBottom: 14 }}>
+                  <div className="rl-tag">
+                    <span className="rl-taghole" />
+                    <div className="rl-tagday">{dayLabel(d.date)}</div>
+                    <div className="rl-tagdate rl-mono">{dayNum(d.date)}</div>
+                  </div>
+                </div>
+
+                {d.events.map((ev, i) => (
+                  <div key={i} className="rl-postit">
+                    {ev}
+                    <button
+                      className="x"
+                      title="Remove"
+                      onClick={() => setDay(d.id, { events: d.events.filter((_, j) => j !== i) })}
+                      style={{ background: "none", border: 0 }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+
+                {eventFor === d.id ? (
+                  <div style={{ marginTop: 8 }}>
+                    <input
+                      className="rl-field"
+                      autoFocus
+                      value={eventText}
+                      placeholder="Dinner 7pm"
+                      onChange={(e) => setEventText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && eventText.trim()) {
+                          setDay(d.id, { events: [...d.events, eventText.trim()] });
+                          setEventText("");
+                          setEventFor(null);
+                        }
+                        if (e.key === "Escape") setEventFor(null);
+                      }}
+                      onBlur={() => {
+                        if (eventText.trim()) setDay(d.id, { events: [...d.events, eventText.trim()] });
+                        setEventText("");
+                        setEventFor(null);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <button
+                    className="rl-btn quiet tiny"
+                    style={{ marginTop: 8, width: "100%" }}
+                    onClick={() => { setEventFor(d.id); setEventText(""); }}
+                  >
+                    + Note
+                  </button>
+                )}
+
+                <div style={{ marginTop: 12 }}>
+                  <LookBoard
+                    items={d.slots.map((id) => allItems[id]).filter(Boolean)}
+                    onRemove={(id) => setDay(d.id, { slots: d.slots.filter((x) => x !== id) })}
+                    empty="No look yet"
+                  />
+                  <button
+                    className="rl-btn ghost tiny"
+                    style={{ marginTop: 8, width: "100%" }}
+                    onClick={() => setPicking({ dayId: d.id })}
+                  >
+                    {d.slots.length ? "Edit look" : "+ Build look"}
+                  </button>
+                  {d.slots.length > 0 && (
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 6, textAlign: "center" }}>
+                      Tap a piece to pull it out
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  className="rl-btn quiet tiny"
+                  style={{ marginTop: 14, width: "100%", borderColor: "transparent" }}
+                  onClick={() => removeDay(d.id)}
+                >
+                  Remove day
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 22, display: "flex", gap: 8 }}>
+            <button className="rl-btn ghost" onClick={addDay}>Add a day</button>
+            {confirmDel ? (
+              <>
+                <span style={{ fontSize: 12, color: "var(--muted)", alignSelf: "center", marginLeft: "auto" }}>
+                  Delete {trip.name} and its plan?
+                </span>
+                <button className="rl-btn ghost" onClick={() => setConfirmDel(false)}>Keep</button>
+                <button className="rl-btn" onClick={() => { deleteTrip(trip.id); onBack(); }}>Delete</button>
+              </>
+            ) : (
+              <button className="rl-btn quiet" style={{ marginLeft: "auto" }} onClick={() => setConfirmDel(true)}>
+                Delete trip
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {tab === "pair" && (
+        <div style={{ marginTop: 24, maxWidth: 760 }}>
+          <div className="rl-pair">
+            {trip.days.map((d) => {
+              const byOwner = { her: [], his: [] };
+              d.slots.forEach((id) => {
+                const it = allItems[id];
+                if (it && byOwner[it.owner]) byOwner[it.owner].push(it);
+              });
+              const hasEvent = d.events.length > 0;
+              return (
+                <div key={d.id} className="rl-pairday">
+                  <div className="rl-pairbar" data-event={hasEvent ? "true" : "false"}>
+                    <span className="d">{dayLabel(d.date)}</span>
+                    {hasEvent && <span className="e">{d.events.join(" · ")}</span>}
+                    <span className="n mono">{dayNum(d.date)}</span>
+                  </div>
+                  <div className="rl-paircols">
+                    {["her", "div", "his"].map((o) =>
+                      o === "div" ? (
+                        <div key="div" className="rl-pairdiv" />
+                      ) : (
+                        <div key={o} className="rl-paircol">
+                          <div className="rl-pairwho">
+                            <span>{OWNER_LABEL[o]}</span>
+                            <button
+                              className="rl-btn ghost tiny"
+                              style={{ padding: "3px 7px", fontSize: 9 }}
+                              onClick={() => setPicking({ dayId: d.id, owner: o })}
+                            >
+                              {byOwner[o].length ? "Edit" : "Dress"}
+                            </button>
+                          </div>
+                          {byOwner[o].length === 0 ? (
+                            <div className="rl-pairnone">Not planned</div>
+                          ) : (
+                            <LookBoard
+                              items={byOwner[o]}
+                              fig={250}
+                              onRemove={(id) => setDay(d.id, { slots: d.slots.filter((x) => x !== id) })}
+                            />
+                          )}
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {trip.days.length === 0 && (
+            <div className="rl-empty">No days on this trip yet. Add one under Days.</div>
+          )}
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 12 }}>
+            Tap a piece to pull it out. Days with a note are marked in yellow.
+          </div>
+        </div>
+      )}
+
+      {tab === "packing" && (
+        <div style={{ marginTop: 24, maxWidth: 620 }}>
+          {pieceIds.length === 0 ? (
+            <div className="rl-empty">
+              Nothing assigned yet. Build looks under Days and the packing list writes itself.
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}>
+                <span className="rl-eyebrow">{packedCount} of {pieceIds.length} packed</span>
+                <button
+                  className="rl-btn quiet tiny"
+                  onClick={() => updateTrip({ ...trip, packed: {} })}
+                >
+                  Reset
+                </button>
+              </div>
+              {Object.keys(packing).sort().map((key) => {
+                const [owner, cat] = key.split("|");
+                return (
+                  <section key={key} style={{ marginBottom: 26 }}>
+                    <div className="rl-railhead">
+                      <span className="rl-railname">{OWNER_LABEL[owner]} · {cat}</span>
+                      <span className="rl-raildots" />
+                      <span className="rl-railcount rl-mono">{String(packing[key].length).padStart(2, "0")}</span>
+                    </div>
+                    {packing[key].map((it) => {
+                      const on = !!(trip.packed && trip.packed[it.id]);
+                      const wornOn = trip.days
+                        .filter((d) => d.slots.includes(it.id))
+                        .map((d) => dayLabel(d.date).slice(0, 3));
+                      return (
+                        <button
+                          key={it.id}
+                          className="rl-packrow"
+                          style={{ width: "100%", background: "none", border: 0, borderBottom: "1px solid var(--rule-soft)", textAlign: "left" }}
+                          onClick={() =>
+                            updateTrip({ ...trip, packed: { ...(trip.packed || {}), [it.id]: !on } })
+                          }
+                        >
+                          <span className="rl-packbox" data-on={on ? "true" : "false"}>{on ? "✓" : ""}</span>
+                          <span className="rl-packthumb">{it.img && <img src={it.img} alt="" />}</span>
+                          <span style={{ flex: 1, fontSize: 14, textDecoration: on ? "line-through" : "none", color: on ? "var(--muted)" : "var(--ink)" }}>
+                            {it.name || it.cat}
+                          </span>
+                          <span className="rl-mono" style={{ fontSize: 10, color: "var(--muted)" }}>
+                            {wornOn.join(" ")}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </section>
+                );
+              })}
+            </>
+          )}
+        </div>
+      )}
+
+      {picking && (() => {
+        const day = trip.days.find((d) => d.id === picking.dayId);
+        if (!day) return null;
+        const mine = picking.owner
+          ? day.slots.filter((id) => allItems[id] && allItems[id].owner === picking.owner)
+          : day.slots;
+        return (
+          <Picker
+            closets={closets}
+            outfits={outfits}
+            allItems={allItems}
+            lockOwner={picking.owner}
+            title={`${dayLabel(day.date)} ${dayNum(day.date)}`}
+            eyebrow={picking.owner ? `${trip.name} · ${OWNER_LABEL[picking.owner]}` : trip.name}
+            initial={mine}
+            onClose={() => setPicking(null)}
+            onConfirm={(ids) => {
+              if (!picking.owner) {
+                setDay(picking.dayId, { slots: ids });
+                return;
+              }
+              const others = day.slots.filter(
+                (id) => !allItems[id] || allItems[id].owner !== picking.owner
+              );
+              setDay(picking.dayId, { slots: [...others, ...ids] });
+            }}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  gates                                                              */
+/* ------------------------------------------------------------------ */
+
+function Centered({ children }) {
+  return (
+    <div className="rl" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <style>{CSS}</style>
+      <div style={{ background: "#fff", border: "1px solid var(--rule)", padding: 30, maxWidth: 400, width: "100%" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function NotConfigured() {
+  return (
+    <Centered>
+      <div className="rl-eyebrow">Setup needed</div>
+      <div className="rl-display" style={{ fontSize: 24, margin: "8px 0 14px" }}>Two keys to go</div>
+      <p style={{ fontSize: 13, lineHeight: 1.65, color: "var(--muted)", margin: 0 }}>
+        Open <code>index.html</code> in a text editor and paste your Supabase project URL and anon key
+        into the config block near the top. SETUP.md walks through where to find them.
+      </p>
+    </Centered>
+  );
+}
+
+function SignIn() {
+  const [email, setEmail] = useState("");
+  const [state, setState] = useState("idle");
+  const [msg, setMsg] = useState("");
+
+  const send = async () => {
+    if (!/.+@.+\..+/.test(email)) { setMsg("That doesn't look like an email address."); return; }
+    setState("sending");
+    const { error } = await supa.auth.signInWithOtp({
+      email: email.trim(),
+      options: { emailRedirectTo: window.location.href },
+    });
+    if (error) { setState("idle"); setMsg(error.message); return; }
+    setState("sent");
+  };
+
+  return (
+    <Centered>
+      <div className="rl-eyebrow">Wardrobe</div>
+      <div className="rl-display" style={{ fontSize: 28, margin: "8px 0 6px" }}>Sign in</div>
+      {state === "sent" ? (
+        <p style={{ fontSize: 13, lineHeight: 1.65, color: "var(--muted)" }}>
+          Link sent to {email}. Open it on this device and you're in. It expires in an hour.
+        </p>
+      ) : (
+        <>
+          <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--muted)", margin: "0 0 18px" }}>
+            No password. We email you a link.
+          </p>
+          <input
+            className="rl-field"
+            type="email"
+            autoFocus
+            value={email}
+            placeholder="you@email.com"
+            onChange={(e) => { setEmail(e.target.value); setMsg(""); }}
+            onKeyDown={(e) => e.key === "Enter" && send()}
+          />
+          <button
+            className="rl-btn"
+            style={{ marginTop: 12, width: "100%" }}
+            onClick={send}
+            disabled={state === "sending"}
+          >
+            {state === "sending" ? "Sending…" : "Email me a link"}
+          </button>
+          {msg && <div style={{ marginTop: 12, fontSize: 12, color: "#9B2C1E", lineHeight: 1.5 }}>{msg}</div>}
+        </>
+      )}
+    </Centered>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  app                                                                */
+/* ------------------------------------------------------------------ */
+
+function App({ session }) {
+  const [ready, setReady] = useState(false);
+  const [view, setView] = useState("closet");
+  const [openTrip, setOpenTrip] = useState(null);
+  const [closets, setClosetsState] = useState({
+    her: { items: [], cats: DEFAULT_CATS.her },
+    his: { items: [], cats: DEFAULT_CATS.his },
+  });
+  const [trips, setTripsState] = useState([]);
+  const [outfits, setOutfitsState] = useState([]);
+  const [adding, setAdding] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [status, setStatus] = useState("");
+  const catsRef = useRef(null);
+
+  const flash = (t) => { setStatus(t); setTimeout(() => setStatus(""), 1800); };
+
+  const [loadError, setLoadError] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoadError(false);
+    try {
+      const d = await db.loadAll();
+      setClosetsState(d.closets);
+      setTripsState(d.trips);
+      setOutfitsState(d.outfits);
+      catsRef.current = { her: d.closets.her.cats, his: d.closets.his.cats };
+      setReady(true);
+    } catch (e) {
+      setLoadError(true);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  /* live sync between the two of you */
+  useEffect(() => {
+    if (!supa) return;
+    let timer = null;
+    const ch = supa
+      .channel("rail-live")
+      .on("postgres_changes", { event: "*", schema: "public" }, () => {
+        if (Date.now() - lastLocalWrite < 2500) return;
+        clearTimeout(timer);
+        timer = setTimeout(load, 700);
+      })
+      .subscribe();
+    return () => { clearTimeout(timer); supa.removeChannel(ch); };
+  }, [load]);
+
+  /* categories persist when they change */
+  const setClosets = (updater) => {
+    setClosetsState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      ["her", "his"].forEach((o) => {
+        const before = catsRef.current ? catsRef.current[o] : null;
+        if (before && JSON.stringify(before) !== JSON.stringify(next[o].cats)) {
+          db.saveCats(o, next[o].cats);
+          catsRef.current[o] = next[o].cats;
+        }
+      });
+      return next;
+    });
+  };
+
+  /* trips + outfits persist by diffing */
+  const setTrips = (updater) => {
+    setTripsState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      const prevIds = new Set(prev.map((t) => t.id));
+      const nextIds = new Set(next.map((t) => t.id));
+      prev.forEach((t) => { if (!nextIds.has(t.id)) db.deleteTrip(t.id); });
+      next.forEach((t) => {
+        const old = prev.find((p) => p.id === t.id);
+        if (!prevIds.has(t.id)) db.saveTrip(t);
+        else if (old !== t) saveTripSoon(t);
+      });
+      return next;
+    });
+  };
+
+  const setOutfits = (updater) => {
+    setOutfitsState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      const nextIds = new Set(next.map((o) => o.id));
+      prev.forEach((o) => { if (!nextIds.has(o.id)) db.deleteOutfit(o.id); });
+      next.forEach((o) => {
+        const old = prev.find((p) => p.id === o.id);
+        if (!old || old !== o) db.saveOutfit(o);
+      });
+      return next;
+    });
+  };
+
+  const allItems = useMemo(() => {
+    const m = {};
+    closets.her.items.forEach((i) => (m[i.id] = i));
+    closets.his.items.forEach((i) => (m[i.id] = i));
+    return m;
+  }, [closets]);
+
+  const addItems = async (items) => {
+    const owner = items[0].owner;
+    setClosetsState((cs) => ({ ...cs, [owner]: { ...cs[owner], items: [...cs[owner].items, ...items] } }));
+    const { error } = await db.addItems(items);
+    flash(error ? "Couldn't save — check your connection" : `Added ${items.length}`);
+    if (error) load();
+  };
+
+  const saveItem = async (item) => {
+    setClosetsState((cs) => ({
+      ...cs,
+      [item.owner]: { ...cs[item.owner], items: cs[item.owner].items.map((i) => (i.id === item.id ? item : i)) },
+    }));
+    const { error } = await db.updateItem(item);
+    if (error) { flash("Couldn't save"); load(); }
+  };
+
+  const deleteItem = async (id) => {
+    setClosetsState((cs) => ({
+      her: { ...cs.her, items: cs.her.items.filter((i) => i.id !== id) },
+      his: { ...cs.his, items: cs.his.items.filter((i) => i.id !== id) },
+    }));
+    setTrips((ts) =>
+      ts.map((t) => {
+        const touched = t.days.some((d) => d.slots.includes(id));
+        if (!touched) return t;
+        return { ...t, days: t.days.map((d) => ({ ...d, slots: d.slots.filter((s) => s !== id) })) };
+      })
+    );
+    setOutfits((os) =>
+      os.map((o) => (o.items.includes(id) ? { ...o, items: o.items.filter((i) => i !== id) } : o))
+    );
+    await db.deleteItem(id);
+  };
+
+  const trip = trips.find((t) => t.id === openTrip);
+  const size = approxSize(closets.her) + approxSize(closets.his);
+  const heavy = size > 6_000_000;
+
+  return (
+    <div className="rl">
+      <style>{CSS}</style>
+
+      <header className="rl-top">
+        <div className="rl-topin">
+          <div className="rl-brand">
+            <span className="rl-wordmark">Wardrobe</span>
+            <span className="rl-mono" style={{ fontSize: 10, color: "var(--muted)" }}>
+              {status || (session.user.email || "").split("@")[0]}
+            </span>
+          </div>
+          <nav className="rl-nav">
+            {[["closet", "Closet"], ["outfits", "Outfits"], ["trips", "Trips"]].map(([k, l]) => (
+              <button
+                key={k}
+                className="rl-navbtn"
+                data-on={view === k ? "true" : "false"}
+                onClick={() => { setView(k); setOpenTrip(null); }}
+              >
+                {l}
+              </button>
+            ))}
+          </nav>
+        </div>
+      </header>
+
+      <main className="rl-wrap">
+        {!ready ? (
+          loadError ? (
+            <div style={{ maxWidth: 420, margin: "40px auto", textAlign: "center" }}>
+              <div className="rl-eyebrow" style={{ marginBottom: 8 }}>Couldn't open the closet</div>
+              <p style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.6, marginBottom: 16 }}>
+                Couldn't reach the database. Nothing has been changed or lost — try again
+                when you've got a signal.
+              </p>
+              <button className="rl-btn" onClick={load}>Try again</button>
+            </div>
+          ) : (
+            <div className="rl-eyebrow">Opening the wardrobe…</div>
+          )
+        ) : (
+          <>
+            {heavy && (
+              <div style={{ background: "var(--tag)", padding: "10px 14px", fontSize: 12, marginBottom: 20, color: "#3A3208" }}>
+                The closet is {fmtBytes(size)}. Still fine, but worth clearing out pieces you no longer wear.
+              </div>
+            )}
+
+            {view === "closet" && (
+              <Closet closets={closets} setClosets={setClosets} openItem={setDetail} openAdd={setAdding} />
+            )}
+
+            {view === "outfits" && (
+              <Outfits closets={closets} outfits={outfits} setOutfits={setOutfits} allItems={allItems} />
+            )}
+
+            {view === "trips" && !trip && (
+              <TripList trips={trips} setTrips={setTrips} allItems={allItems} onOpen={setOpenTrip} />
+            )}
+
+            {view === "trips" && trip && (
+              <TripDetail
+                trip={trip}
+                updateTrip={(t) => setTrips((ts) => ts.map((x) => (x.id === t.id ? t : x)))}
+                deleteTrip={(id) => setTrips((ts) => ts.filter((x) => x.id !== id))}
+                closets={closets}
+                outfits={outfits}
+                allItems={allItems}
+                onBack={() => setOpenTrip(null)}
+              />
+            )}
+
+            <footer style={{ marginTop: 60, paddingTop: 16, borderTop: "1px solid var(--rule)", fontSize: 11, color: "var(--muted)", lineHeight: 1.7, display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+              <span>
+                Signed in as {session.user.email}. Changes appear on the other person's screen within
+                a few seconds.
+              </span>
+              <button
+                className="rl-btn quiet tiny"
+                onClick={() => supa.auth.signOut()}
+              >
+                Sign out
+              </button>
+            </footer>
+          </>
+        )}
+      </main>
+
+      {adding && (
+        <AddPieces
+          owner={adding}
+          closets={closets}
+          setClosets={setClosets}
+          onClose={() => setAdding(null)}
+          onAdd={addItems}
+        />
+      )}
+
+      {detail && (
+        <ItemDetail
+          item={detail}
+          cats={closets[detail.owner].cats}
+          onClose={() => setDetail(null)}
+          onSave={saveItem}
+          onDelete={deleteItem}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  boot                                                               */
+/* ------------------------------------------------------------------ */
+
+function Root() {
+  const [session, setSession] = useState(undefined);
+
+  useEffect(() => {
+    if (!supa) return;
+    supa.auth.getSession().then(({ data }) => setSession(data.session || null));
+    const { data: sub } = supa.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  if (!CONFIGURED) return <NotConfigured />;
+  if (session === undefined) return <Centered><div className="rl-eyebrow">Checking…</div></Centered>;
+  if (!session) return <SignIn />;
+  return <App session={session} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
+
+</script>
+</body>
+</html>
