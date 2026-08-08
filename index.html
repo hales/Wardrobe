@@ -332,6 +332,14 @@ function hslFromName(name) {
   return null;
 }
 
+/* A white (or near-white) garment on the closet's own paper-coloured
+   card can all but disappear into it. Give those a deeper backdrop so
+   the piece still reads against its own thumbnail. */
+function isPaleName(name) {
+  const hsl = hslFromName(name);
+  return !!hsl && hsl.s <= 0.1 && hsl.l >= 0.9;
+}
+
 /* Whites, greys and blacks don't have a meaningful hue, so they'd
    otherwise scatter randomly through a hue sort. Bucket them first,
    darkest to lightest, then run the rest around the colour wheel. */
@@ -509,6 +517,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 .rl-rack .rl-cell img { height: 100%; width: auto; }
 .rl-cell img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .rl-cell[data-sel="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
+.rl-cell[data-pale="true"] { background: var(--wall); }
 .rl-cell .rl-check {
   position: absolute; top: 5px; right: 5px;
   width: 17px; height: 17px; background: var(--ink); color: var(--paper);
@@ -719,6 +728,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 }
 .rl-slide img { height: 100%; width: auto; max-width: 100%; object-fit: contain; display: block; }
 .rl-slide[data-sel="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
+.rl-slide[data-pale="true"] { background: var(--wall); }
 .rl-arrow {
   position: absolute; top: 50%; transform: translateY(-50%);
   width: 32px; height: 32px; border: 1px solid var(--ink); border-radius: 50%;
@@ -972,6 +982,7 @@ function Thumb({ item, onClick, selected, showOwner }) {
     <button
       className="rl-cell"
       data-sel={selected ? "true" : "false"}
+      data-pale={isPaleName(item.name) ? "true" : "false"}
       onClick={onClick}
       title={item.name || item.cat}
     >
@@ -1368,6 +1379,7 @@ function Carousel({ items, onPick, selected, size = 124 }) {
             key={it.id}
             className="rl-slide"
             data-sel={selected && selected.includes(it.id) ? "true" : "false"}
+            data-pale={isPaleName(it.name) ? "true" : "false"}
             onClick={() => onPick(it)}
             title={it.name || it.cat}
           >
