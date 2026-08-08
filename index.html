@@ -770,7 +770,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
    Pieces are sized by HEIGHT against a notional figure (--fig), not by
    width, so a source image's own aspect ratio can't make a shirt taller
    than a pair of trousers. Fractions approximate where each garment sits
-   on a body: torso ~26%, waist-to-floor ~44%, foot ~9%. */
+   on a body: torso ~32%, waist-to-floor ~40%, foot ~9%. */
 .rl-board {
   --fig: 300px;
   position: relative; background: var(--paper); border: 1px solid var(--rule-soft);
@@ -794,16 +794,16 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   border-radius: 50%; font-size: 10px; line-height: 16px; text-align: center; z-index: 6;
 }
 
-.rl-board-item[data-zone="outer"]       { height: calc(var(--fig) * 0.30); z-index: 1; }
-.rl-board-item[data-zone="outerLong"]   { height: calc(var(--fig) * 0.40); z-index: 1; }
-.rl-board-item[data-zone="top"]         { height: calc(var(--fig) * 0.26); z-index: 2; }
+.rl-board-item[data-zone="outer"]       { height: calc(var(--fig) * 0.36); z-index: 1; }
+.rl-board-item[data-zone="outerLong"]   { height: calc(var(--fig) * 0.46); z-index: 1; }
+.rl-board-item[data-zone="top"]         { height: calc(var(--fig) * 0.32); z-index: 2; }
 .rl-board-item[data-zone="dress"]       { height: calc(var(--fig) * 0.46); }
-.rl-board-item[data-zone="bottomLong"]  { height: calc(var(--fig) * 0.44); }
+.rl-board-item[data-zone="bottomLong"]  { height: calc(var(--fig) * 0.40); }
 .rl-board-item[data-zone="bottomShort"] { height: calc(var(--fig) * 0.24); }
 
 /* A shoe's defining dimension is its length, not its height — sizing it
    by height renders it as a sliver. */
-.rl-board-item[data-zone="shoes"] { width: calc(var(--fig) * 0.20); height: auto; }
+.rl-board-item[data-zone="shoes"] { width: calc(var(--fig) * 0.30); height: auto; }
 .rl-board-item[data-zone="shoes"] img { width: 100%; height: auto; }
 
 /* a top sitting in front of a jacket tucks well over its edge, and hangs
@@ -905,6 +905,16 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 }
 .rl-chip:hover { color: var(--ink); border-color: var(--ink); }
 .rl-chip[data-on="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+.rl-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border: 1px solid var(--rule); background: var(--paper);
+  color: var(--muted); border-radius: 999px;
+  transition: background .16s ease, color .16s ease, border-color .16s ease;
+}
+.rl-iconbtn:hover { color: var(--ink); border-color: var(--ink); }
+.rl-iconbtn[data-on="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.rl-iconbtn svg { width: 16px; height: 16px; display: block; }
 
 /* ---- cards ---- */
 .rl-card {
@@ -1446,7 +1456,7 @@ function Closet({ closets, setClosets, openItem, openAdd, defaultOwner, hideAdd 
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 14 }}>
         <div>
           <div className="rl-eyebrow" style={{ marginBottom: 6 }}>Closet</div>
           <div className="rl-chips">
@@ -1465,17 +1475,42 @@ function Closet({ closets, setClosets, openItem, openAdd, defaultOwner, hideAdd 
               </button>
             ))}
           </div>
-          <div className="rl-chips">
-            {[["carousel", "Carousel"], ["grid", "Grid"]].map(([k, l]) => (
-              <button key={k} className="rl-chip" data-on={layout === k ? "true" : "false"} onClick={() => setLayout(k)}>
-                {l}
-              </button>
-            ))}
-          </div>
           <span className="rl-mono" style={{ fontSize: 11, color: "var(--muted)" }}>
             {String(total).padStart(3, "0")}
           </span>
           {!hideAdd && <button className="rl-btn" onClick={() => openAdd(owner)}>Add pieces</button>}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 24 }}>
+        <div className="rl-chips">
+          <button
+            className="rl-iconbtn"
+            data-on={layout === "carousel" ? "true" : "false"}
+            onClick={() => setLayout("carousel")}
+            aria-label="Carousel view"
+            title="Carousel"
+          >
+            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <rect x="1" y="4" width="4" height="10" rx="1" />
+              <rect x="7" y="2" width="4" height="14" rx="1" />
+              <rect x="13" y="4" width="4" height="10" rx="1" />
+            </svg>
+          </button>
+          <button
+            className="rl-iconbtn"
+            data-on={layout === "grid" ? "true" : "false"}
+            onClick={() => setLayout("grid")}
+            aria-label="Grid view"
+            title="Grid"
+          >
+            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <rect x="1.5" y="1.5" width="6" height="6" rx="1" />
+              <rect x="10.5" y="1.5" width="6" height="6" rx="1" />
+              <rect x="1.5" y="10.5" width="6" height="6" rx="1" />
+              <rect x="10.5" y="10.5" width="6" height="6" rx="1" />
+            </svg>
+          </button>
         </div>
       </div>
 
