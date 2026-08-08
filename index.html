@@ -1212,6 +1212,7 @@ function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
   const [cat, setCat] = useState(item.cat);
   const [loc, setLoc] = useState(item.loc || "CUN");
   const [confirm, setConfirm] = useState(false);
+  const [previewBg, setPreviewBg] = useState("white");
 
   return (
     <Sheet
@@ -1244,7 +1245,21 @@ function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
         </>
       }
     >
-      <div style={{ background: "#fff", border: "1px solid var(--rule)", padding: 24, display: "flex", justifyContent: "center", marginBottom: 22 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+        <div className="rl-chips">
+          {["white", "gray"].map((b) => (
+            <button key={b} className="rl-chip" data-on={previewBg === b ? "true" : "false"} onClick={() => setPreviewBg(b)}>
+              {b === "white" ? "White" : "Gray"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div
+        style={{
+          background: previewBg === "gray" ? "#E8E8E6" : "#fff",
+          border: "1px solid var(--rule)", padding: 24, display: "flex", justifyContent: "center", marginBottom: 22,
+        }}
+      >
         {item.img ? (
           <img src={item.img} alt="" style={{ maxHeight: 240, maxWidth: "100%", objectFit: "contain" }} />
         ) : (
