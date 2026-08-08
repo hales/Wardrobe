@@ -73,11 +73,11 @@ const db = {
       closets: {
         her: {
           items: (items.data || []).filter((r) => r.owner === "her").map(fromRow),
-          cats: migrateCats("her", catsFor("her")),
+          cats: catsFor("her") || DEFAULT_CATS.her,
         },
         his: {
           items: (items.data || []).filter((r) => r.owner === "his").map(fromRow),
-          cats: migrateCats("his", catsFor("his")),
+          cats: catsFor("his") || DEFAULT_CATS.his,
         },
       },
       trips: (trips.data || []).map((r) => r.data).filter(Boolean),
@@ -171,25 +171,6 @@ const DEFAULT_CATS = {
   ],
 };
 
-/* Category lists shipped in earlier versions. A closet still carrying one
-   of these verbatim has never been customised, so it can be safely moved
-   to the current defaults. A list the person has edited is left alone. */
-const LEGACY_CATS = {
-  her: [
-    ["Dresses","Tops","Knitwear","Outerwear","Bottoms","Shoes","Bags","Swim","Accessories"],
-    ["Dresses","Tops","Jackets","Skirts","Shorts","Shoes","Bathing suits","Hats"],
-  ],
-  his: [
-    ["Outerwear","Shirts","Knitwear","Tees & polos","Trousers","Shorts","Swim","Shoes","Accessories"],
-  ],
-};
-
-function migrateCats(owner, saved) {
-  if (!Array.isArray(saved) || !saved.length) return DEFAULT_CATS[owner];
-  const key = JSON.stringify(saved);
-  const isLegacy = (LEGACY_CATS[owner] || []).some((l) => JSON.stringify(l) === key);
-  return isLegacy ? DEFAULT_CATS[owner] : saved;
-}
 
 const OWNER_LABEL = { her: "Her", his: "His" };
 const LOCS = ["CUN", "NYC"];
@@ -288,6 +269,66 @@ async function processPhoto(file, opts) {
   try { data = canvas.toDataURL("image/webp", 0.8); } catch (e) { data = null; }
   if (!data || data.indexOf("image/webp") < 0) data = canvas.toDataURL("image/png");
   return { img: data };
+}
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d === 0) return { h: 0, s: 0, l };
+  const s = d / (1 - Math.abs(2 * l - 1));
+  let h;
+  switch (max) {
+    case r: h = ((g - b) / d + (g < b ? 6 : 0)); break;
+    case g: h = (b - r) / d + 2; break;
+    default: h = (r - g) / d + 4;
+  }
+  return { h: h * 60, s, l };
+}
+
+/* A cheap stand-in for a garment's colour: shrink the photo to a few
+   pixels and average what's left. Good enough to sort a closet by —
+   not meant to name the exact shade. */
+function sampleColor(src) {
+  return new Promise((resolve) => {
+    if (!src) return resolve(null);
+    const img = new Image();
+    img.onerror = () => resolve(null);
+    img.onload = () => {
+      try {
+        const size = 16;
+        const c = document.createElement("canvas");
+        c.width = size; c.height = size;
+        const ctx = c.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, size, size);
+        const d = ctx.getImageData(0, 0, size, size).data;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i + 3] < 16) continue; // skip any leftover transparency
+          r += d[i]; g += d[i + 1]; b += d[i + 2];
+          n++;
+        }
+        resolve(n ? rgbToHsl(r / n, g / n, b / n) : null);
+      } catch (e) {
+        resolve(null);
+      }
+    };
+    img.src = src;
+  });
+}
+
+/* Whites, greys and blacks don't have a meaningful hue, so they'd
+   otherwise scatter randomly through a hue sort. Bucket them first
+   (light to dark), then run the rest around the colour wheel. */
+function colorSortKey(hsl) {
+  if (!hsl) return [2, 0];
+  const { h, s, l } = hsl;
+  if (s < 0.15 || l < 0.06 || l > 0.95) return [0, 1 - l];
+  return [1, h];
+}
+function compareColorKey(a, b) {
+  return a[0] - b[0] || a[1] - b[1];
 }
 
 function approxSize(obj) {
@@ -1334,12 +1375,31 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
   const [newCat, setNewCat] = useState("");
   const [showCatAdd, setShowCatAdd] = useState(false);
   const [note, setNote] = useState("");
+  const [colors, setColors] = useState({}); // item id -> {h,s,l} | null
+
+  useEffect(() => {
+    const toSample = closet.items.filter((it) => it.img && !(it.id in colors));
+    if (!toSample.length) return;
+    let cancelled = false;
+    Promise.all(toSample.map((it) => sampleColor(it.img).then((hsl) => [it.id, hsl]))).then((pairs) => {
+      if (cancelled) return;
+      setColors((c) => {
+        const next = { ...c };
+        pairs.forEach(([id, hsl]) => { next[id] = hsl; });
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [closet.items]);
 
   const visibleItems = useMemo(
     () => (locFilter === "all" ? closet.items : closet.items.filter((it) => (it.loc || "CUN") === locFilter)),
     [closet.items, locFilter]
   );
 
+  /* Sorted by colour within each rail — whites/greys/blacks first, then
+     round the colour wheel. Pieces not sampled yet keep their place at
+     the end rather than jumping around once their colour resolves. */
   const grouped = useMemo(() => {
     const m = {};
     closet.cats.forEach((c) => (m[c] = []));
@@ -1347,8 +1407,13 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
       if (!m[it.cat]) m[it.cat] = [];
       m[it.cat].push(it);
     });
+    Object.keys(m).forEach((c) => {
+      m[c] = [...m[c]].sort((a, b) =>
+        compareColorKey(colorSortKey(colors[a.id]), colorSortKey(colors[b.id]))
+      );
+    });
     return m;
-  }, [closet.cats, visibleItems]);
+  }, [closet.cats, visibleItems, colors]);
 
   const total = visibleItems.length;
 
