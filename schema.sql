@@ -10,8 +10,18 @@ create table if not exists items (
   cat         text not null default 'Other',
   name        text not null default '',
   img         text not null default '',
+  loc         text not null default 'CUN' check (loc in ('CUN', 'NYC')),
   created_at  timestamptz not null default now()
 );
+
+-- Adds the closet-location column to a table created before it existed.
+-- No-ops on a fresh install, since the create table above already has it.
+alter table items add column if not exists loc text not null default 'CUN';
+do $$
+begin
+  alter table items add constraint items_loc_check check (loc in ('CUN', 'NYC'));
+exception when duplicate_object then null;
+end $$;
 
 create table if not exists closet_settings (
   owner  text primary key check (owner in ('her', 'his')),

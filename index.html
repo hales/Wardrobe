@@ -24,7 +24,7 @@
 </script>
 <!-- ================================================================= -->
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.1/dist/umd/supabase.min.js"></script>
 <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
@@ -91,7 +91,7 @@ const db = {
   },
   updateItem(it) {
     touch();
-    return supa.from("items").update({ owner: it.owner, cat: it.cat, name: it.name, img: it.img }).eq("id", it.id);
+    return supa.from("items").update({ owner: it.owner, cat: it.cat, loc: it.loc, name: it.name, img: it.img }).eq("id", it.id);
   },
   deleteItem(id) {
     touch();
@@ -120,13 +120,14 @@ const db = {
 };
 
 function toRow(it) {
-  return { id: it.id, owner: it.owner, cat: it.cat, name: it.name || "", img: it.img || "" };
+  return { id: it.id, owner: it.owner, cat: it.cat, loc: it.loc || "CUN", name: it.name || "", img: it.img || "" };
 }
 function fromRow(r) {
   return {
     id: r.id,
     owner: r.owner,
     cat: r.cat,
+    loc: r.loc || "CUN",
     name: r.name || "",
     img: r.img || "",
     addedAt: r.created_at ? Date.parse(r.created_at) : 0,
@@ -190,6 +191,7 @@ function migrateCats(owner, saved) {
 }
 
 const OWNER_LABEL = { her: "Her", his: "His" };
+const LOCS = ["CUN", "NYC"];
 
 function parseYMD(s) {
   const [y, m, d] = String(s).split("-").map(Number);
@@ -245,45 +247,6 @@ function cleanName(filename) {
   return base.slice(0, 40);
 }
 
-/* Re-crops an already-stored image tight to its garment. Used to repair
-   pieces added when photos were padded into squares. Anything with no
-   transparency (a kept-original photo) comes back unchanged. */
-function recropDataUrl(src, margin = 0.05) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onerror = () => resolve(null);
-    img.onload = () => {
-      try {
-        const w = img.width, h = img.height;
-        const c = document.createElement("canvas");
-        c.width = w; c.height = h;
-        const ctx = c.getContext("2d", { willReadFrequently: true });
-        ctx.drawImage(img, 0, 0);
-        const box = opaqueBounds(ctx, w, h);
-        if (!box) return resolve(null);
-        // already tight — nothing to gain
-        if (box.w > w * 0.95 && box.h > h * 0.95) return resolve(null);
-
-        const longest = Math.max(box.w, box.h);
-        const pad = Math.round(longest * margin);
-        const out = document.createElement("canvas");
-        out.width = box.w + pad * 2;
-        out.height = box.h + pad * 2;
-        const octx = out.getContext("2d");
-        octx.drawImage(c, box.x, box.y, box.w, box.h, pad, pad, box.w, box.h);
-
-        let data = null;
-        try { data = out.toDataURL("image/webp", 0.8); } catch (e) { data = null; }
-        if (!data || data.indexOf("image/webp") < 0) data = out.toDataURL("image/png");
-        resolve(data);
-      } catch (e) {
-        resolve(null);
-      }
-    };
-    img.src = src;
-  });
-}
-
 function imageFromFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -298,91 +261,10 @@ function imageFromFile(file) {
   });
 }
 
-/* Knocks out a plain background by flooding inward from the edges.
-   Works well for a garment laid on a floor, bed or table of roughly even
-   colour. It cannot separate an item from a busy room or from a person
-   wearing it — nothing here invents pixels that were never photographed. */
-function knockOutBackground(ctx, w, h, tolerance) {
-  const img = ctx.getImageData(0, 0, w, h);
-  const d = img.data;
-  const at = (x, y) => (y * w + x) * 4;
-
-  // estimate the background from a ring of border pixels (median per channel)
-  const rs = [], gs = [], bs = [];
-  const stepX = Math.max(1, Math.floor(w / 80));
-  const stepY = Math.max(1, Math.floor(h / 80));
-  for (let x = 0; x < w; x += stepX) {
-    for (const y of [0, h - 1]) { const i = at(x, y); rs.push(d[i]); gs.push(d[i + 1]); bs.push(d[i + 2]); }
-  }
-  for (let y = 0; y < h; y += stepY) {
-    for (const x of [0, w - 1]) { const i = at(x, y); rs.push(d[i]); gs.push(d[i + 1]); bs.push(d[i + 2]); }
-  }
-  const med = (a) => { a.sort((p, q) => p - q); return a[Math.floor(a.length / 2)] || 0; };
-  const br = med(rs), bg = med(gs), bb = med(bs);
-
-  const tol2 = tolerance * tolerance * 3;
-  const seen = new Uint8Array(w * h);
-  const stack = [];
-  for (let x = 0; x < w; x++) { stack.push(x, 0, x, h - 1); }
-  for (let y = 0; y < h; y++) { stack.push(0, y, w - 1, y); }
-
-  let cleared = 0;
-  while (stack.length) {
-    const y = stack.pop(), x = stack.pop();
-    if (x < 0 || y < 0 || x >= w || y >= h) continue;
-    const p = y * w + x;
-    if (seen[p]) continue;
-    const i = p * 4;
-    const dr = d[i] - br, dg = d[i + 1] - bg, db = d[i + 2] - bb;
-    if (dr * dr + dg * dg + db * db > tol2) continue;
-    seen[p] = 1;
-    d[i + 3] = 0;
-    cleared++;
-    stack.push(x + 1, y, x - 1, y, x, y + 1, x, y - 1);
-  }
-
-  // soften the cut edge so it doesn't look scissored
-  const alpha = new Uint8ClampedArray(w * h);
-  for (let p = 0; p < w * h; p++) alpha[p] = d[p * 4 + 3];
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      const p = y * w + x;
-      if (alpha[p] === 0) continue;
-      let sum = 0;
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) sum += alpha[p + dy * w + dx];
-      const avg = sum / 9;
-      if (avg < 255) d[p * 4 + 3] = avg;
-    }
-  }
-
-  ctx.putImageData(img, 0, 0);
-  return cleared / (w * h);
-}
-
-function opaqueBounds(ctx, w, h, threshold = 12) {
-  const d = ctx.getImageData(0, 0, w, h).data;
-  let minX = w, minY = h, maxX = -1, maxY = -1;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      if (d[(y * w + x) * 4 + 3] > threshold) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  if (maxX < 0) return null;
-  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
-}
-
-/* Crops tight to the garment and keeps its true aspect ratio. An earlier
-   version padded everything into a square, which left transparent margins
-   around each piece — that made wide items like shoes render tiny and
-   stopped layered pieces from actually overlapping. Uniform display size
-   is handled by the closet's fixed slide boxes instead. */
+/* Resizes a photo down to a sane storage size, keeping its true aspect
+   ratio. Nothing here alters the pixels the camera actually captured. */
 async function processPhoto(file, opts) {
-  const { removeBg = true, tolerance = 34, out = 380, margin = 0.05 } = opts || {};
+  const { out = 380, margin = 0.05 } = opts || {};
   const img = await imageFromFile(file);
 
   const workMax = 800;
@@ -390,50 +272,21 @@ async function processPhoto(file, opts) {
   const w = Math.max(1, Math.round(img.width * scale));
   const h = Math.max(1, Math.round(img.height * scale));
 
-  const work = document.createElement("canvas");
-  work.width = w; work.height = h;
-  const wctx = work.getContext("2d", { willReadFrequently: true });
-  wctx.drawImage(img, 0, 0, w, h);
-
-  let note = null;
-  let box = null;
-
-  if (removeBg) {
-    let cleared = 0;
-    try {
-      cleared = knockOutBackground(wctx, w, h, tolerance);
-    } catch (e) {
-      note = "Couldn't read the pixels of this one — kept it as-is.";
-    }
-    if (!note) {
-      if (cleared < 0.04) note = "Background too busy to remove cleanly — kept the original.";
-      else if (cleared > 0.97) note = "That removed nearly everything — kept the original.";
-    }
-    if (note) {
-      wctx.clearRect(0, 0, w, h);
-      wctx.drawImage(img, 0, 0, w, h);
-    } else {
-      box = opaqueBounds(wctx, w, h);
-    }
-  }
-
-  if (!box) box = { x: 0, y: 0, w, h };
-
-  const k = (out * (1 - margin * 2)) / Math.max(box.w, box.h);
-  const dw = Math.max(1, Math.round(box.w * k));
-  const dh = Math.max(1, Math.round(box.h * k));
+  const k = (out * (1 - margin * 2)) / Math.max(w, h);
+  const dw = Math.max(1, Math.round(w * k));
+  const dh = Math.max(1, Math.round(h * k));
   const pad = Math.round(out * margin);
 
   const canvas = document.createElement("canvas");
   canvas.width = dw + pad * 2;
   canvas.height = dh + pad * 2;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(work, box.x, box.y, box.w, box.h, pad, pad, dw, dh);
+  ctx.drawImage(img, 0, 0, img.width, img.height, pad, pad, dw, dh);
 
   let data = null;
   try { data = canvas.toDataURL("image/webp", 0.8); } catch (e) { data = null; }
   if (!data || data.indexOf("image/webp") < 0) data = canvas.toDataURL("image/png");
-  return { img: data, note };
+  return { img: data };
 }
 
 function approxSize(obj) {
@@ -469,6 +322,7 @@ const CSS = `
   --tag-ink: #4A3820;
   --tag-deep: #C9A75C;
   --accent: #A8452E;
+  --flag-ny: #3B5D74;
   font-family: 'Zen Kaku Gothic New', ui-sans-serif, system-ui, -apple-system, 'Hiragino Sans', sans-serif;
   font-weight: 400;
   color: var(--ink);
@@ -575,9 +429,12 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 .rl-raildots { flex: 1; border-bottom: 1px dotted var(--rule); transform: translateY(-4px); }
 .rl-railcount { font-size: 11px; color: var(--muted); }
 
+/* A strict grid forces every cell to the same width, which then starves
+   the height of anything wider than it is tall (shoes, bags laid flat).
+   Wrapping flexbox instead gives every piece the same HEIGHT and lets
+   width follow its own photo, the way the carousel already does. */
 .rl-rack {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  display: flex; flex-wrap: wrap;
   gap: 1px;
   background: var(--rule-soft);
   border: 1px solid var(--rule-soft);
@@ -589,6 +446,11 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   display: flex; align-items: center; justify-content: center;
   padding: 8px; border: 0;
 }
+.rl-rack .rl-cell {
+  aspect-ratio: auto; flex: 0 0 auto;
+  height: 112px; min-width: 64px; max-width: 220px;
+}
+.rl-rack .rl-cell img { height: 100%; width: auto; }
 .rl-cell img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .rl-cell[data-sel="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
 .rl-cell .rl-check {
@@ -599,6 +461,12 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 .rl-cell .rl-owner {
   position: absolute; bottom: 4px; left: 5px;
   font-size: 8px; letter-spacing: .1em; color: #BFB3A0; text-transform: uppercase;
+}
+.rl-locflag {
+  position: absolute; top: 5px; left: 5px;
+  background: var(--flag-ny); color: #F3F0E8;
+  font-size: 8px; font-weight: 700; letter-spacing: .06em;
+  padding: 2px 5px; border-radius: 3px; line-height: 1.3;
 }
 
 /* ---- hang tag ---- */
@@ -786,18 +654,15 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 }
 .rl-car::-webkit-scrollbar { display: none; }
 .rl-slide {
-  flex: 0 0 var(--slide, 124px); height: calc(var(--slide, 124px) * 1.2);
+  flex: 0 0 auto; height: calc(var(--slide, 124px) * 1.2);
+  min-width: calc(var(--slide, 124px) * 0.5);
+  max-width: calc(var(--slide, 124px) * 1.8);
   scroll-snap-align: start; background: var(--paper);
   display: flex; align-items: center; justify-content: center;
   padding: 10px; border: 0; position: relative;
 }
-.rl-slide img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.rl-slide img { height: 100%; width: auto; max-width: 100%; object-fit: contain; display: block; }
 .rl-slide[data-sel="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
-.rl-slide .rl-slidename {
-  position: absolute; left: 0; right: 0; bottom: 4px; text-align: center;
-  font-size: 9px; color: #B3A794; padding: 0 6px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
 .rl-arrow {
   position: absolute; top: 50%; transform: translateY(-50%);
   width: 32px; height: 32px; border: 1px solid var(--ink); border-radius: 50%;
@@ -823,16 +688,6 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   background-size: 12px 12px; background-position: 0 0, 6px 6px;
 }
 .rl-swatchbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.rl-range { width: 100%; accent-color: var(--ink); }
-.rl-toggle {
-  display: flex; align-items: center; gap: 9px; padding: 10px 0;
-  font-size: 13px; cursor: pointer;
-}
-.rl-toggle input { width: 16px; height: 16px; accent-color: var(--ink); }
-.rl-warn {
-  background: var(--tag); color: var(--tag-ink); padding: 8px 10px;
-  font-size: 11.5px; line-height: 1.5; margin-top: 10px;
-}
 
 /* Kept on-page but visually hidden — Safari refuses to open the picker
    for an input with display:none. A label drives it instead. */
@@ -1070,6 +925,7 @@ function Thumb({ item, onClick, selected, showOwner }) {
         <span className="rl-eyebrow">No image</span>
       )}
       {selected && <span className="rl-check">✓</span>}
+      {item.loc === "NYC" && <span className="rl-locflag" title="New York">NY</span>}
       {showOwner && <span className="rl-owner">{OWNER_LABEL[item.owner]}</span>}
     </button>
   );
@@ -1083,14 +939,12 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
   const [owner, setOwner] = useState(initialOwner);
   const cats = closets[owner].cats;
   const [cat, setCat] = useState(cats[0] || "Other");
+  const [loc, setLoc] = useState("CUN");
   const [newCat, setNewCat] = useState("");
   const [showCatAdd, setShowCatAdd] = useState(false);
-  const [queue, setQueue] = useState([]); // {img, name, note}
+  const [queue, setQueue] = useState([]); // {img, name}
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
-  const [removeBg, setRemoveBg] = useState(true);
-  const [tolerance, setTolerance] = useState(34);
-  const [lastFiles, setLastFiles] = useState([]);
   const fileRef = useRef(null);
   const inputId = useRef("rl-file-" + uid()).current;
 
@@ -1113,45 +967,23 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
     setShowCatAdd(false);
   };
 
-  const runFiles = async (files, tol, strip) => {
-    setBusy(`Cleaning up ${files.length} photo${files.length > 1 ? "s" : ""}…`);
+  const onFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setBusy(`Preparing ${files.length} photo${files.length > 1 ? "s" : ""}…`);
     setErr("");
     const added = [];
     for (const f of files) {
       try {
-        const r = await processPhoto(f, { removeBg: strip, tolerance: tol });
-        added.push({ img: r.img, name: cleanName(f.name), note: r.note });
+        const r = await processPhoto(f, {});
+        added.push({ img: r.img, name: cleanName(f.name) });
       } catch (e) {
         setErr(e.message);
       }
     }
     setBusy("");
-    return added;
-  };
-
-  const onFiles = async (e) => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-    setLastFiles(files);
-    const added = await runFiles(files, tolerance, removeBg);
     setQueue((q) => [...q, ...added]);
     if (fileRef.current) fileRef.current.value = "";
-  };
-
-  /* Re-running cleanup replaces the last batch's images, but must keep
-     any names already typed for them. */
-  const redo = async () => {
-    if (!lastFiles.length) return;
-    const added = await runFiles(lastFiles, tolerance, removeBg);
-    setQueue((q) => {
-      const keep = q.slice(0, Math.max(0, q.length - lastFiles.length));
-      const previous = q.slice(Math.max(0, q.length - lastFiles.length));
-      const merged = added.map((a, i) => ({
-        ...a,
-        name: previous[i] && previous[i].name ? previous[i].name : a.name,
-      }));
-      return [...keep, ...merged];
-    });
   };
 
   const commit = () => {
@@ -1161,6 +993,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
         id: uid(),
         owner,
         cat,
+        loc,
         name: q.name || "",
         img: q.img,
         addedAt: Date.now(),
@@ -1168,8 +1001,6 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
     );
     onClose();
   };
-
-  const notes = queue.filter((q) => q.note).length;
 
   return (
     <Sheet
@@ -1227,39 +1058,16 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
         </div>
       )}
 
-      <div className="rl-eyebrow" style={{ margin: "22px 0 4px" }}>Photos</div>
+      <div className="rl-eyebrow" style={{ marginBottom: 8 }}>Location</div>
+      <div className="rl-chips" style={{ marginBottom: 22 }}>
+        {LOCS.map((l) => (
+          <button key={l} className="rl-chip" data-on={loc === l ? "true" : "false"} onClick={() => setLoc(l)}>
+            {l}
+          </button>
+        ))}
+      </div>
 
-      <label className="rl-toggle">
-        <input type="checkbox" checked={removeBg} onChange={(e) => setRemoveBg(e.target.checked)} />
-        <span>Remove the background and centre the item</span>
-      </label>
-
-      {removeBg && (
-        <div style={{ margin: "4px 0 14px" }}>
-          <div className="rl-eyebrow" style={{ marginBottom: 6 }}>
-            Strength — {tolerance}
-          </div>
-          <input
-            className="rl-range"
-            type="range"
-            min="12"
-            max="80"
-            value={tolerance}
-            onChange={(e) => setTolerance(Number(e.target.value))}
-          />
-          <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
-            Higher strips more. Too high eats into the garment; too low leaves a halo.
-            {lastFiles.length > 0 && (
-              <>
-                {" "}
-                <button className="rl-btn ghost tiny" style={{ marginTop: 8 }} onClick={redo} disabled={!!busy}>
-                  Redo last batch
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      <div className="rl-eyebrow" style={{ margin: "22px 0 10px" }}>Photos</div>
 
       <input
         ref={fileRef}
@@ -1279,19 +1087,8 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
         Safari shows — it can't be skipped, but it's always the first option.
       </div>
 
-      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, lineHeight: 1.55 }}>
-        Works best on a garment laid flat on a plain floor, bed or table. It can't lift an item
-        off a person or out of a busy room — for those, photograph the piece by itself.
-      </div>
-
       {busy && <div className="rl-eyebrow" style={{ marginTop: 12 }}>{busy}</div>}
       {err && <div style={{ marginTop: 12, fontSize: 12, color: "var(--accent)" }}>{err}</div>}
-      {notes > 0 && (
-        <div className="rl-warn">
-          {notes} photo{notes > 1 ? "s" : ""} couldn't be cut out cleanly and {notes > 1 ? "were" : "was"} kept
-          as-is. Try raising the strength, or reshoot against a plainer background.
-        </div>
-      )}
 
       {queue.length > 0 && (
         <>
@@ -1304,7 +1101,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
           <div className="rl-queue">
             {queue.map((q, i) => (
               <div className="rl-queuerow" key={i}>
-                <span className="rl-queuethumb" data-note={q.note ? "true" : "false"} title={q.note || ""}>
+                <span className="rl-queuethumb">
                   {q.img ? <img src={q.img} alt="" /> : null}
                 </span>
                 <span className="rl-queuename">
@@ -1331,8 +1128,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
 
           <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, lineHeight: 1.5 }}>
             Names are optional — anything left blank shows as its category.
-            These go to {OWNER_LABEL[owner]} · {cat}.
-            {notes > 0 && " An amber edge means that photo kept its background."}
+            These go to {OWNER_LABEL[owner]} · {cat} · {loc}.
           </div>
         </>
       )}
@@ -1347,6 +1143,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
 function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
   const [name, setName] = useState(item.name || "");
   const [cat, setCat] = useState(item.cat);
+  const [loc, setLoc] = useState(item.loc || "CUN");
   const [confirm, setConfirm] = useState(false);
 
   return (
@@ -1372,7 +1169,7 @@ function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
                 Remove
               </button>
               <button className="rl-btn ghost" onClick={onClose}>Cancel</button>
-              <button className="rl-btn" onClick={() => { onSave({ ...item, name: name.trim(), cat }); onClose(); }}>
+              <button className="rl-btn" onClick={() => { onSave({ ...item, name: name.trim(), cat, loc }); onClose(); }}>
                 Save
               </button>
             </>
@@ -1401,6 +1198,15 @@ function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
         {cats.map((c) => (
           <button key={c} className="rl-chip" data-on={cat === c ? "true" : "false"} onClick={() => setCat(c)}>
             {c}
+          </button>
+        ))}
+      </div>
+
+      <div className="rl-eyebrow" style={{ margin: "22px 0 8px" }}>Location</div>
+      <div className="rl-chips">
+        {LOCS.map((l) => (
+          <button key={l} className="rl-chip" data-on={loc === l ? "true" : "false"} onClick={() => setLoc(l)}>
+            {l}
           </button>
         ))}
       </div>
@@ -1510,7 +1316,7 @@ function Carousel({ items, onPick, selected, size = 124 }) {
             title={it.name || it.cat}
           >
             {it.img ? <img src={it.img} alt={it.name || it.cat} loading="lazy" /> : <span className="rl-eyebrow">No image</span>}
-            {it.name && <span className="rl-slidename">{it.name}</span>}
+            {it.loc === "NYC" && <span className="rl-locflag" title="New York">NY</span>}
           </button>
         ))}
       </div>
@@ -1522,52 +1328,28 @@ function Carousel({ items, onPick, selected, size = 124 }) {
 function Closet({ closets, setClosets, openItem, openAdd }) {
   const [owner, setOwner] = useState("her");
   const [layout, setLayout] = useState("carousel");
+  const [locFilter, setLocFilter] = useState("all");
   const closet = closets[owner];
   const [newCat, setNewCat] = useState("");
   const [showCatAdd, setShowCatAdd] = useState(false);
-  const [recropping, setRecropping] = useState("");
-  const [recropNote, setRecropNote] = useState("");
+  const [note, setNote] = useState("");
 
-  const recrop = async () => {
-    const items = closet.items.filter((i) => i.img && i.img.indexOf("data:") === 0);
-    if (!items.length) {
-      setRecropNote("Nothing here to re-crop.");
-      return;
-    }
-    setRecropNote("");
-    const updates = {};
-    for (let i = 0; i < items.length; i++) {
-      setRecropping(`Re-cropping ${i + 1}/${items.length}`);
-      const next = await recropDataUrl(items[i].img);
-      if (next) updates[items[i].id] = next;
-    }
-    setRecropping("");
-    const n = Object.keys(updates).length;
-    if (!n) {
-      setRecropNote("These were already cropped tight.");
-      return;
-    }
-    setClosets((cs) => ({
-      ...cs,
-      [owner]: {
-        ...cs[owner],
-        items: cs[owner].items.map((it) => (updates[it.id] ? { ...it, img: updates[it.id] } : it)),
-      },
-    }));
-    setRecropNote(`Re-cropped ${n} piece${n > 1 ? "s" : ""}.`);
-  };
+  const visibleItems = useMemo(
+    () => (locFilter === "all" ? closet.items : closet.items.filter((it) => (it.loc || "CUN") === locFilter)),
+    [closet.items, locFilter]
+  );
 
   const grouped = useMemo(() => {
     const m = {};
     closet.cats.forEach((c) => (m[c] = []));
-    closet.items.forEach((it) => {
+    visibleItems.forEach((it) => {
       if (!m[it.cat]) m[it.cat] = [];
       m[it.cat].push(it);
     });
     return m;
-  }, [closet]);
+  }, [closet.cats, visibleItems]);
 
-  const total = closet.items.length;
+  const total = visibleItems.length;
 
   const addCat = () => {
     const c = newCat.trim();
@@ -1611,6 +1393,13 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <div className="rl-chips">
+            {["all", ...LOCS].map((l) => (
+              <button key={l} className="rl-chip" data-on={locFilter === l ? "true" : "false"} onClick={() => setLocFilter(l)}>
+                {l === "all" ? "All" : l}
+              </button>
+            ))}
+          </div>
+          <div className="rl-chips">
             {[["carousel", "Carousel"], ["grid", "Grid"]].map(([k, l]) => (
               <button key={k} className="rl-chip" data-on={layout === k ? "true" : "false"} onClick={() => setLayout(k)}>
                 {l}
@@ -1626,9 +1415,15 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
 
       {total === 0 && (
         <div className="rl-empty">
-          {OWNER_LABEL[owner]}'s closet is empty.
-          <br />
-          Add pieces by uploading photos from your phone.
+          {closet.items.length === 0 ? (
+            <>
+              {OWNER_LABEL[owner]}'s closet is empty.
+              <br />
+              Add pieces by uploading photos from your phone.
+            </>
+          ) : (
+            <>Nothing filed under {locFilter}.</>
+          )}
         </div>
       )}
 
@@ -1666,23 +1461,18 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
                 className="rl-btn quiet tiny"
                 onClick={() => {
                   setClosets((cs) => ({ ...cs, [owner]: { ...cs[owner], cats: DEFAULT_CATS[owner] } }));
-                  setRecropNote("Categories reset. Any piece filed elsewhere still shows, listed under its own heading.");
+                  setNote("Categories reset. Any piece filed elsewhere still shows, listed under its own heading.");
                 }}
               >
                 Use standard categories
               </button>
             )}
-            {total > 0 && (
-              <button className="rl-btn quiet tiny" onClick={recrop} disabled={!!recropping}>
-                {recropping || "Re-crop photos"}
-              </button>
-            )}
           </>
         )}
       </div>
-      {recropNote && (
+      {note && (
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 8, lineHeight: 1.5 }}>
-          {recropNote}
+          {note}
         </div>
       )}
     </div>

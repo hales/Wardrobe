@@ -90,7 +90,9 @@ Edit `index.html`, then drag the folder onto Netlify again. It replaces the old 
 
 **Backups.** Supabase's free tier doesn't keep automatic backups. If the closet ever represents real work, go to Table Editor, pick a table, and use Export to CSV every so often.
 
-**Photos.** On upload, each photo has its background stripped, is cropped tight to the garment, and is stored in the database as text. That keeps setup to a single file. A few hundred pieces is comfortable; well past that, the right move is Supabase Storage — ask me and I'll convert it.
+**Photos.** On upload, each photo is resized down and stored in the database as text, exactly as shot. That keeps setup to a single file. A few hundred pieces is comfortable; well past that, the right move is Supabase Storage — ask me and I'll convert it.
+
+**Two locations.** Every piece is tagged CUN or NYC for which closet it physically lives in. Tag it when you add it, or change it later from the piece's detail view. The closet screen has an All / CUN / NYC filter, and anything tagged NYC gets a small "NY" flag on its thumbnail everywhere it appears.
 
 **Where the two of you can collide.** Edits sync within a few seconds. If you both edit the *same day of the same trip* in the same moment, the later save wins. Different days, different trips, or different closets are all safe.
 
