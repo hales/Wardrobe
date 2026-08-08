@@ -1994,6 +1994,7 @@ function Outfits({ closets, outfits, setOutfits, allItems }) {
           title="Choose pieces"
           eyebrow={building.name || "Outfit"}
           initial={building.items}
+          lockOwner={building.owner}
           onClose={() => setPicking(false)}
           onConfirm={(ids) => setBuilding((b) => ({ ...b, items: ids }))}
         />
