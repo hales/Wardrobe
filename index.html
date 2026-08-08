@@ -23,7 +23,7 @@
   };
 </script>
 <!-- ================================================================= -->
- 
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
@@ -31,28 +31,28 @@
 </head>
 <body>
 <div id="root"><div id="boot">Loading…</div></div>
- 
+
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
- 
+
 /* ------------------------------------------------------------------ */
 /*  supabase                                                           */
 /* ------------------------------------------------------------------ */
- 
+
 const CFG = window.RAIL_CONFIG || {};
 const CONFIGURED =
   typeof CFG.SUPABASE_URL === "string" &&
   CFG.SUPABASE_URL.indexOf("https://") === 0 &&
   typeof CFG.SUPABASE_ANON_KEY === "string" &&
   CFG.SUPABASE_ANON_KEY.length > 30;
- 
+
 const supa = CONFIGURED
   ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY)
   : null;
- 
+
 let lastLocalWrite = 0;
 const touch = () => { lastLocalWrite = Date.now(); };
- 
+
 const db = {
   async loadAll() {
     const [items, settings, trips, outfits] = await Promise.all([
@@ -63,12 +63,12 @@ const db = {
     ]);
     const err = items.error || settings.error || trips.error || outfits.error;
     if (err) throw err;
- 
+
     const catsFor = (owner) => {
       const row = (settings.data || []).find((r) => r.owner === owner);
       return row && Array.isArray(row.cats) && row.cats.length ? row.cats : null;
     };
- 
+
     return {
       closets: {
         her: {
@@ -84,7 +84,7 @@ const db = {
       outfits: (outfits.data || []).map((r) => r.data).filter(Boolean),
     };
   },
- 
+
   addItems(items) {
     touch();
     return supa.from("items").insert(items.map(toRow));
@@ -118,7 +118,7 @@ const db = {
     return supa.from("outfits").delete().eq("id", id);
   },
 };
- 
+
 function toRow(it) {
   return { id: it.id, owner: it.owner, cat: it.cat, name: it.name || "", img: it.img || "" };
 }
@@ -132,7 +132,7 @@ function fromRow(r) {
     addedAt: r.created_at ? Date.parse(r.created_at) : 0,
   };
 }
- 
+
 const tripTimers = {};
 function saveTripSoon(t, onDone) {
   clearTimeout(tripTimers[t.id]);
@@ -140,13 +140,13 @@ function saveTripSoon(t, onDone) {
     db.saveTrip(t).then(({ error }) => onDone && onDone(error));
   }, 450);
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  helpers                                                            */
 /* ------------------------------------------------------------------ */
- 
+
 const uid = () => Math.random().toString(36).slice(2, 10);
- 
+
 const DEFAULT_CATS = {
   her: [
     "Dresses",
@@ -168,7 +168,7 @@ const DEFAULT_CATS = {
     "Shoes",
   ],
 };
- 
+
 /* Category lists shipped in earlier versions. A closet still carrying one
    of these verbatim has never been customised, so it can be safely moved
    to the current defaults. A list the person has edited is left alone. */
@@ -181,16 +181,16 @@ const LEGACY_CATS = {
     ["Outerwear","Shirts","Knitwear","Tees & polos","Trousers","Shorts","Swim","Shoes","Accessories"],
   ],
 };
- 
+
 function migrateCats(owner, saved) {
   if (!Array.isArray(saved) || !saved.length) return DEFAULT_CATS[owner];
   const key = JSON.stringify(saved);
   const isLegacy = (LEGACY_CATS[owner] || []).some((l) => JSON.stringify(l) === key);
   return isLegacy ? DEFAULT_CATS[owner] : saved;
 }
- 
+
 const OWNER_LABEL = { her: "Her", his: "His" };
- 
+
 function parseYMD(s) {
   const [y, m, d] = String(s).split("-").map(Number);
   return new Date(y, (m || 1) - 1, d || 1);
@@ -202,7 +202,7 @@ function toYMD(dt) {
 }
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
- 
+
 function dayLabel(ymd) {
   const d = parseYMD(ymd);
   return DOW[d.getDay()].toUpperCase();
@@ -234,7 +234,7 @@ function daysBetween(start, end) {
   }
   return out;
 }
- 
+
 /* A filename is only worth keeping if a person chose it. Camera and
    screenshot names are noise, so they start blank instead. */
 function cleanName(filename) {
@@ -244,7 +244,7 @@ function cleanName(filename) {
   if (/^\d{4,}[\s\d]*$/.test(base)) return "";
   return base.slice(0, 40);
 }
- 
+
 /* Re-crops an already-stored image tight to its garment. Used to repair
    pieces added when photos were padded into squares. Anything with no
    transparency (a kept-original photo) comes back unchanged. */
@@ -263,7 +263,7 @@ function recropDataUrl(src, margin = 0.05) {
         if (!box) return resolve(null);
         // already tight — nothing to gain
         if (box.w > w * 0.95 && box.h > h * 0.95) return resolve(null);
- 
+
         const longest = Math.max(box.w, box.h);
         const pad = Math.round(longest * margin);
         const out = document.createElement("canvas");
@@ -271,7 +271,7 @@ function recropDataUrl(src, margin = 0.05) {
         out.height = box.h + pad * 2;
         const octx = out.getContext("2d");
         octx.drawImage(c, box.x, box.y, box.w, box.h, pad, pad, box.w, box.h);
- 
+
         let data = null;
         try { data = out.toDataURL("image/webp", 0.8); } catch (e) { data = null; }
         if (!data || data.indexOf("image/webp") < 0) data = out.toDataURL("image/png");
@@ -283,7 +283,7 @@ function recropDataUrl(src, margin = 0.05) {
     img.src = src;
   });
 }
- 
+
 function imageFromFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -297,7 +297,7 @@ function imageFromFile(file) {
     reader.readAsDataURL(file);
   });
 }
- 
+
 /* Knocks out a plain background by flooding inward from the edges.
    Works well for a garment laid on a floor, bed or table of roughly even
    colour. It cannot separate an item from a busy room or from a person
@@ -306,7 +306,7 @@ function knockOutBackground(ctx, w, h, tolerance) {
   const img = ctx.getImageData(0, 0, w, h);
   const d = img.data;
   const at = (x, y) => (y * w + x) * 4;
- 
+
   // estimate the background from a ring of border pixels (median per channel)
   const rs = [], gs = [], bs = [];
   const stepX = Math.max(1, Math.floor(w / 80));
@@ -319,13 +319,13 @@ function knockOutBackground(ctx, w, h, tolerance) {
   }
   const med = (a) => { a.sort((p, q) => p - q); return a[Math.floor(a.length / 2)] || 0; };
   const br = med(rs), bg = med(gs), bb = med(bs);
- 
+
   const tol2 = tolerance * tolerance * 3;
   const seen = new Uint8Array(w * h);
   const stack = [];
   for (let x = 0; x < w; x++) { stack.push(x, 0, x, h - 1); }
   for (let y = 0; y < h; y++) { stack.push(0, y, w - 1, y); }
- 
+
   let cleared = 0;
   while (stack.length) {
     const y = stack.pop(), x = stack.pop();
@@ -340,7 +340,7 @@ function knockOutBackground(ctx, w, h, tolerance) {
     cleared++;
     stack.push(x + 1, y, x - 1, y, x, y + 1, x, y - 1);
   }
- 
+
   // soften the cut edge so it doesn't look scissored
   const alpha = new Uint8ClampedArray(w * h);
   for (let p = 0; p < w * h; p++) alpha[p] = d[p * 4 + 3];
@@ -354,11 +354,11 @@ function knockOutBackground(ctx, w, h, tolerance) {
       if (avg < 255) d[p * 4 + 3] = avg;
     }
   }
- 
+
   ctx.putImageData(img, 0, 0);
   return cleared / (w * h);
 }
- 
+
 function opaqueBounds(ctx, w, h, threshold = 12) {
   const d = ctx.getImageData(0, 0, w, h).data;
   let minX = w, minY = h, maxX = -1, maxY = -1;
@@ -375,7 +375,7 @@ function opaqueBounds(ctx, w, h, threshold = 12) {
   if (maxX < 0) return null;
   return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
 }
- 
+
 /* Crops tight to the garment and keeps its true aspect ratio. An earlier
    version padded everything into a square, which left transparent margins
    around each piece — that made wide items like shoes render tiny and
@@ -384,20 +384,20 @@ function opaqueBounds(ctx, w, h, threshold = 12) {
 async function processPhoto(file, opts) {
   const { removeBg = true, tolerance = 34, out = 380, margin = 0.05 } = opts || {};
   const img = await imageFromFile(file);
- 
+
   const workMax = 800;
   const scale = Math.min(1, workMax / Math.max(img.width, img.height));
   const w = Math.max(1, Math.round(img.width * scale));
   const h = Math.max(1, Math.round(img.height * scale));
- 
+
   const work = document.createElement("canvas");
   work.width = w; work.height = h;
   const wctx = work.getContext("2d", { willReadFrequently: true });
   wctx.drawImage(img, 0, 0, w, h);
- 
+
   let note = null;
   let box = null;
- 
+
   if (removeBg) {
     let cleared = 0;
     try {
@@ -416,26 +416,26 @@ async function processPhoto(file, opts) {
       box = opaqueBounds(wctx, w, h);
     }
   }
- 
+
   if (!box) box = { x: 0, y: 0, w, h };
- 
+
   const k = (out * (1 - margin * 2)) / Math.max(box.w, box.h);
   const dw = Math.max(1, Math.round(box.w * k));
   const dh = Math.max(1, Math.round(box.h * k));
   const pad = Math.round(out * margin);
- 
+
   const canvas = document.createElement("canvas");
   canvas.width = dw + pad * 2;
   canvas.height = dh + pad * 2;
   const ctx = canvas.getContext("2d");
   ctx.drawImage(work, box.x, box.y, box.w, box.h, pad, pad, dw, dh);
- 
+
   let data = null;
   try { data = canvas.toDataURL("image/webp", 0.8); } catch (e) { data = null; }
   if (!data || data.indexOf("image/webp") < 0) data = canvas.toDataURL("image/png");
   return { img: data, note };
 }
- 
+
 function approxSize(obj) {
   try {
     return JSON.stringify(obj).length;
@@ -448,14 +448,14 @@ function fmtBytes(n) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  styles                                                             */
 /* ------------------------------------------------------------------ */
- 
+
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap');
- 
+
 .rl {
   /* A kissaten: aged plaster walls, porcelain cups, espresso, brass and
      a single stroke of hanko vermilion. */
@@ -480,9 +480,9 @@ const CSS = `
 .rl button { font-family: inherit; cursor: pointer; }
 .rl input, .rl select, .rl textarea { font-family: inherit; }
 .rl :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
- 
+
 .rl-mono { font-family: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
- 
+
 /* ---- eyebrow / label type ---- */
 .rl-eyebrow {
   font-size: 10px;
@@ -497,7 +497,7 @@ const CSS = `
   letter-spacing: .01em;
   line-height: 1.02;
 }
- 
+
 /* ---- chrome ---- */
 .rl-top {
   position: sticky; top: 0; z-index: 40;
@@ -528,9 +528,9 @@ const CSS = `
   border-bottom: 2px solid transparent;
 }
 .rl-navbtn[data-on="true"] { color: var(--ink); border-bottom-color: var(--ink); }
- 
+
 .rl-wrap { max-width: 1180px; margin: 0 auto; padding: 22px 18px 120px; }
- 
+
 /* ---- buttons ----
    Pills against square paper: the controls are the soft layer, the cards
    and tiles stay hard-edged, so the contrast reads as chosen. */
@@ -544,15 +544,15 @@ const CSS = `
 .rl-btn:active { transform: translateY(1px); }
 .rl-btn:disabled { opacity: .3; cursor: not-allowed; transform: none; }
 .rl-btn:disabled:hover { background: var(--ink); border-color: var(--ink); }
- 
+
 .rl-btn.ghost { background: transparent; color: var(--ink); }
 .rl-btn.ghost:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
- 
+
 .rl-btn.quiet { background: transparent; color: var(--muted); border-color: var(--rule); }
 .rl-btn.quiet:hover { background: transparent; color: var(--ink); border-color: var(--ink); }
- 
+
 .rl-btn.tiny { padding: 7px 15px; font-size: 10px; letter-spacing: .11em; }
- 
+
 /* ---- inputs ---- */
 .rl-field {
   width: 100%; background: var(--paper); border: 1px solid var(--rule);
@@ -562,7 +562,7 @@ const CSS = `
 .rl-field::placeholder { color: #B3A794; }
 .rl-field:focus { outline: none; border-color: var(--ink); }
 textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
- 
+
 /* ---- the rail: category row ---- */
 .rl-railhead {
   display: flex; align-items: baseline; gap: 10px;
@@ -574,7 +574,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 }
 .rl-raildots { flex: 1; border-bottom: 1px dotted var(--rule); transform: translateY(-4px); }
 .rl-railcount { font-size: 11px; color: var(--muted); }
- 
+
 .rl-rack {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
@@ -600,7 +600,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   position: absolute; bottom: 4px; left: 5px;
   font-size: 8px; letter-spacing: .1em; color: #BFB3A0; text-transform: uppercase;
 }
- 
+
 /* ---- hang tag ---- */
 .rl-days {
   display: flex; gap: 0; overflow-x: auto; padding-top: 26px;
@@ -629,7 +629,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 }
 .rl-tagday { font-size: 11px; font-weight: 700; letter-spacing: .16em; }
 .rl-tagdate { font-size: 10px; color: var(--muted); margin-top: 1px; }
- 
+
 .rl-postit {
   background: var(--tag); border: 0; color: var(--tag-ink);
   padding: 6px 8px; font-size: 11px; line-height: 1.3;
@@ -640,12 +640,12 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 .rl-postit .x {
   position: absolute; top: 2px; right: 4px; font-size: 11px; opacity: .45;
 }
- 
+
 .rl-slotgrid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
   background: var(--rule-soft); border: 1px solid var(--rule-soft);
 }
- 
+
 /* ---- paired day view ---- */
 .rl-pair { border-top: 1px solid var(--rule); }
 .rl-pairday { border-bottom: 1px solid var(--rule); }
@@ -697,7 +697,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   font-size: 14px; line-height: 1;
 }
 .rl-queuedrop:hover { border-color: var(--ink); color: var(--ink); }
- 
+
 /* ---- calendar ---- */
 .rl-calbar {
   display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
@@ -734,7 +734,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   overflow: hidden;
 }
 .rl-calthumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
- 
+
 .rl-calday {
   border: 1px solid var(--rule); background: var(--paper);
   padding: 14px; margin-top: 18px;
@@ -776,7 +776,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px;
   font-size: 11px; color: var(--muted); align-items: center;
 }
- 
+
 /* ---- carousel closet ---- */
 .rl-carwrap { position: relative; }
 .rl-car {
@@ -807,7 +807,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 @media (min-width: 760px) { .rl-carwrap:hover .rl-arrow { display: flex; } }
 .rl-arrow.l { left: 4px; }
 .rl-arrow.r { right: 4px; }
- 
+
 /* ---- cleanup controls ---- */
 .rl-swatch {
   display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px;
@@ -833,7 +833,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   background: var(--tag); color: var(--tag-ink); padding: 8px 10px;
   font-size: 11.5px; line-height: 1.5; margin-top: 10px;
 }
- 
+
 /* Kept on-page but visually hidden — Safari refuses to open the picker
    for an input with display:none. A label drives it instead. */
 .rl-fileinput {
@@ -853,7 +853,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 .rl-filebtn:hover { background: #3E3128; border-color: #3E3128; }
 .rl-filebtn:active { transform: translateY(1px); }
 .rl-fileinput:focus-visible + .rl-filebtn { outline: 2px solid var(--ink); outline-offset: 2px; }
- 
+
 /* ---- look board (moodboard per day) ----
    Pieces are sized by HEIGHT against a notional figure (--fig), not by
    width, so a source image's own aspect ratio can't make a shirt taller
@@ -881,29 +881,29 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   width: 16px; height: 16px; background: var(--ink); color: var(--paper);
   border-radius: 50%; font-size: 10px; line-height: 16px; text-align: center; z-index: 6;
 }
- 
+
 .rl-board-item[data-zone="outer"]       { height: calc(var(--fig) * 0.30); z-index: 1; }
 .rl-board-item[data-zone="outerLong"]   { height: calc(var(--fig) * 0.40); z-index: 1; }
 .rl-board-item[data-zone="top"]         { height: calc(var(--fig) * 0.26); z-index: 2; }
 .rl-board-item[data-zone="dress"]       { height: calc(var(--fig) * 0.46); }
 .rl-board-item[data-zone="bottomLong"]  { height: calc(var(--fig) * 0.44); }
 .rl-board-item[data-zone="bottomShort"] { height: calc(var(--fig) * 0.24); }
- 
+
 /* A shoe's defining dimension is its length, not its height — sizing it
    by height renders it as a sliver. */
 .rl-board-item[data-zone="shoes"] { width: calc(var(--fig) * 0.20); height: auto; }
 .rl-board-item[data-zone="shoes"] img { width: 100%; height: auto; }
- 
+
 /* a top sitting in front of a jacket tucks well over its edge, and hangs
    slightly lower than the shoulder line */
 .rl-board-item[data-layered="true"] {
   margin-left: calc(var(--fig) * -0.20);
   margin-top: calc(var(--fig) * 0.03);
 }
- 
+
 .rl-board-mid   { margin-top: calc(var(--fig) * -0.015); }
 .rl-board-feet  { margin-top: calc(var(--fig) * 0.015); }
- 
+
 .rl-board-accent {
   position: absolute; right: 5px;
   height: calc(var(--fig) * 0.15); z-index: 3;
@@ -912,11 +912,11 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   border: 1px dashed var(--rule); background: transparent;
   padding: 22px 10px; text-align: center; font-size: 10.5px; color: #B3A794;
 }
- 
+
 .rl-pairnone {
   font-size: 11px; color: #B3A794; padding: 12px 0; letter-spacing: .02em;
 }
- 
+
 /* ---- swipe deck ---- */
 .rl-deck {
   position: relative; height: 400px; background: #E4DACB;
@@ -958,7 +958,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   position: absolute; top: 12px; left: 0; right: 0; text-align: center;
   font-size: 10px; letter-spacing: .14em; color: var(--muted); pointer-events: none;
 }
- 
+
 /* ---- sheet / modal ---- */
 .rl-scrim {
   position: fixed; inset: 0; background: rgba(20,20,15,.42); z-index: 60;
@@ -982,7 +982,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   display: flex; gap: 8px; align-items: center; justify-content: flex-end;
   background: var(--wall);
 }
- 
+
 /* ---- chips ---- */
 .rl-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .rl-chip {
@@ -993,20 +993,20 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 }
 .rl-chip:hover { color: var(--ink); border-color: var(--ink); }
 .rl-chip[data-on="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
- 
+
 /* ---- cards ---- */
 .rl-card {
   background: var(--paper); border: 1px solid var(--rule);
   padding: 16px; width: 100%; text-align: left; display: block;
 }
 .rl-card:hover { border-color: var(--ink); }
- 
+
 .rl-empty {
   border: 1px dashed var(--rule); background: transparent;
   padding: 34px 20px; text-align: center; color: var(--muted); font-size: 13px;
   line-height: 1.6;
 }
- 
+
 .rl-packrow {
   display: flex; align-items: center; gap: 12px;
   padding: 9px 0; border-bottom: 1px solid var(--rule-soft);
@@ -1022,17 +1022,17 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   border: 1px solid var(--rule-soft); display:flex; align-items:center; justify-content:center;
 }
 .rl-packthumb img { max-width: 92%; max-height: 92%; object-fit: contain; }
- 
+
 @media (prefers-reduced-motion: no-preference) {
   .rl-fade { animation: rlfade .18s ease-out; }
   @keyframes rlfade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 }
 `;
- 
+
 /* ------------------------------------------------------------------ */
 /*  small components                                                   */
 /* ------------------------------------------------------------------ */
- 
+
 function Sheet({ title, eyebrow, onClose, children, footer }) {
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
@@ -1055,7 +1055,7 @@ function Sheet({ title, eyebrow, onClose, children, footer }) {
     </div>
   );
 }
- 
+
 function Thumb({ item, onClick, selected, showOwner }) {
   return (
     <button
@@ -1074,11 +1074,11 @@ function Thumb({ item, onClick, selected, showOwner }) {
     </button>
   );
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  add pieces                                                         */
 /* ------------------------------------------------------------------ */
- 
+
 function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd }) {
   const [owner, setOwner] = useState(initialOwner);
   const cats = closets[owner].cats;
@@ -1093,7 +1093,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
   const [lastFiles, setLastFiles] = useState([]);
   const fileRef = useRef(null);
   const inputId = useRef("rl-file-" + uid()).current;
- 
+
   const switchOwner = (o) => {
     setOwner(o);
     const list = closets[o].cats;
@@ -1101,7 +1101,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
     setShowCatAdd(false);
     setNewCat("");
   };
- 
+
   const addCategory = () => {
     const c = newCat.trim();
     if (!c) return;
@@ -1112,7 +1112,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
     setNewCat("");
     setShowCatAdd(false);
   };
- 
+
   const runFiles = async (files, tol, strip) => {
     setBusy(`Cleaning up ${files.length} photo${files.length > 1 ? "s" : ""}…`);
     setErr("");
@@ -1128,7 +1128,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
     setBusy("");
     return added;
   };
- 
+
   const onFiles = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
@@ -1137,7 +1137,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
     setQueue((q) => [...q, ...added]);
     if (fileRef.current) fileRef.current.value = "";
   };
- 
+
   /* Re-running cleanup replaces the last batch's images, but must keep
      any names already typed for them. */
   const redo = async () => {
@@ -1153,7 +1153,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
       return [...keep, ...merged];
     });
   };
- 
+
   const commit = () => {
     if (!queue.length) return;
     onAdd(
@@ -1168,9 +1168,9 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
     );
     onClose();
   };
- 
+
   const notes = queue.filter((q) => q.note).length;
- 
+
   return (
     <Sheet
       title="Add pieces"
@@ -1196,7 +1196,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
           </button>
         ))}
       </div>
- 
+
       <div className="rl-eyebrow" style={{ marginBottom: 8 }}>Category</div>
       <div className="rl-chips" style={{ marginBottom: 10 }}>
         {cats.map((c) => (
@@ -1208,7 +1208,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
           <button className="rl-chip" onClick={() => setShowCatAdd(true)}>+ New</button>
         )}
       </div>
- 
+
       {showCatAdd && (
         <div style={{ display: "flex", gap: 8, marginBottom: 18, maxWidth: 380 }}>
           <input
@@ -1226,14 +1226,14 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
           <button className="rl-btn ghost" onClick={() => { setShowCatAdd(false); setNewCat(""); }}>Cancel</button>
         </div>
       )}
- 
+
       <div className="rl-eyebrow" style={{ margin: "22px 0 4px" }}>Photos</div>
- 
+
       <label className="rl-toggle">
         <input type="checkbox" checked={removeBg} onChange={(e) => setRemoveBg(e.target.checked)} />
         <span>Remove the background and centre the item</span>
       </label>
- 
+
       {removeBg && (
         <div style={{ margin: "4px 0 14px" }}>
           <div className="rl-eyebrow" style={{ marginBottom: 6 }}>
@@ -1260,7 +1260,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
           </div>
         </div>
       )}
- 
+
       <input
         ref={fileRef}
         id={inputId}
@@ -1273,17 +1273,17 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
       <label htmlFor={inputId} className="rl-filebtn">
         Choose photos
       </label>
- 
+
       <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 10, lineHeight: 1.55 }}>
         Pick as many as you like at once. On iPhone, tap <strong>Photo Library</strong> in the menu
         Safari shows — it can't be skipped, but it's always the first option.
       </div>
- 
+
       <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, lineHeight: 1.55 }}>
         Works best on a garment laid flat on a plain floor, bed or table. It can't lift an item
         off a person or out of a busy room — for those, photograph the piece by itself.
       </div>
- 
+
       {busy && <div className="rl-eyebrow" style={{ marginTop: 12 }}>{busy}</div>}
       {err && <div style={{ marginTop: 12, fontSize: 12, color: "var(--accent)" }}>{err}</div>}
       {notes > 0 && (
@@ -1292,7 +1292,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
           as-is. Try raising the strength, or reshoot against a plainer background.
         </div>
       )}
- 
+
       {queue.length > 0 && (
         <>
           <div className="rl-railhead" style={{ marginTop: 26 }}>
@@ -1300,7 +1300,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
             <span className="rl-raildots" />
             <span className="rl-railcount rl-mono">{String(queue.length).padStart(2, "0")}</span>
           </div>
- 
+
           <div className="rl-queue">
             {queue.map((q, i) => (
               <div className="rl-queuerow" key={i}>
@@ -1328,7 +1328,7 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
               </div>
             ))}
           </div>
- 
+
           <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, lineHeight: 1.5 }}>
             Names are optional — anything left blank shows as its category.
             These go to {OWNER_LABEL[owner]} · {cat}.
@@ -1339,16 +1339,16 @@ function AddPieces({ owner: initialOwner, closets, setClosets, onClose, onAdd })
     </Sheet>
   );
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  item detail                                                        */
 /* ------------------------------------------------------------------ */
- 
+
 function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
   const [name, setName] = useState(item.name || "");
   const [cat, setCat] = useState(item.cat);
   const [confirm, setConfirm] = useState(false);
- 
+
   return (
     <Sheet
       title={name || "Untitled piece"}
@@ -1387,7 +1387,7 @@ function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
           <span className="rl-eyebrow">No image</span>
         )}
       </div>
- 
+
       <div className="rl-eyebrow" style={{ marginBottom: 8 }}>Name</div>
       <input
         className="rl-field"
@@ -1395,7 +1395,7 @@ function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
         placeholder="Black silk slip, Toteme blazer…"
         onChange={(e) => setName(e.target.value)}
       />
- 
+
       <div className="rl-eyebrow" style={{ margin: "22px 0 8px" }}>Category</div>
       <div className="rl-chips">
         {cats.map((c) => (
@@ -1407,11 +1407,11 @@ function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
     </Sheet>
   );
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  closet                                                             */
 /* ------------------------------------------------------------------ */
- 
+
 /* Works out where a piece sits on the body, from its category.
    Distinguishes long from short so trousers aren't drawn the size of
    shorts. Anything unrecognised is treated as a top rather than dropped. */
@@ -1428,23 +1428,23 @@ function zoneOf(item) {
   if (/bottom|trouser|jean|pant|legging|chino|slack/.test(c)) return "bottomLong";
   return "top";
 }
- 
+
 /* Which pieces best represent a look at thumbnail size. */
 const MOSAIC_ORDER = ["dress", "top", "outer", "outerLong", "bottomLong", "bottomShort", "shoes", "accent"];
- 
+
 const IS_OUTER = (z) => z === "outer" || z === "outerLong";
 const IS_MID = (z) => z === "dress" || z === "bottomLong" || z === "bottomShort";
- 
+
 function LookBoard({ items, onRemove, empty = "Nothing yet", fig }) {
   if (!items.length) return <div className="rl-board-empty">{empty}</div>;
- 
+
   const zoned = items.map((it) => ({ it, z: zoneOf(it) }));
   const outer = zoned.filter((x) => IS_OUTER(x.z));
   const tops = zoned.filter((x) => x.z === "top");
   const mids = zoned.filter((x) => IS_MID(x.z));
   const feet = zoned.filter((x) => x.z === "shoes");
   const accents = zoned.filter((x) => x.z === "accent");
- 
+
   const piece = ({ it, z }, extra) => (
     <button
       key={it.id}
@@ -1457,7 +1457,7 @@ function LookBoard({ items, onRemove, empty = "Nothing yet", fig }) {
       {it.img ? <img src={it.img} alt={it.name || it.cat} loading="lazy" /> : null}
     </button>
   );
- 
+
   return (
     <div className="rl-board" style={fig ? { "--fig": fig + "px" } : undefined}>
       <div className="rl-board-stack">
@@ -1490,7 +1490,7 @@ function LookBoard({ items, onRemove, empty = "Nothing yet", fig }) {
     </div>
   );
 }
- 
+
 function Carousel({ items, onPick, selected, size = 124 }) {
   const ref = useRef(null);
   const nudge = (dir) => {
@@ -1518,7 +1518,7 @@ function Carousel({ items, onPick, selected, size = 124 }) {
     </div>
   );
 }
- 
+
 function Closet({ closets, setClosets, openItem, openAdd }) {
   const [owner, setOwner] = useState("her");
   const [layout, setLayout] = useState("carousel");
@@ -1527,7 +1527,7 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
   const [showCatAdd, setShowCatAdd] = useState(false);
   const [recropping, setRecropping] = useState("");
   const [recropNote, setRecropNote] = useState("");
- 
+
   const recrop = async () => {
     const items = closet.items.filter((i) => i.img && i.img.indexOf("data:") === 0);
     if (!items.length) {
@@ -1556,7 +1556,7 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
     }));
     setRecropNote(`Re-cropped ${n} piece${n > 1 ? "s" : ""}.`);
   };
- 
+
   const grouped = useMemo(() => {
     const m = {};
     closet.cats.forEach((c) => (m[c] = []));
@@ -1566,9 +1566,9 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
     });
     return m;
   }, [closet]);
- 
+
   const total = closet.items.length;
- 
+
   const addCat = () => {
     const c = newCat.trim();
     if (!c || closet.cats.includes(c)) return;
@@ -1576,7 +1576,7 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
     setNewCat("");
     setShowCatAdd(false);
   };
- 
+
   const renderRow = (c, items) => (
     <section key={c} style={{ marginBottom: 34 }}>
       <div className="rl-railhead">
@@ -1595,7 +1595,7 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
       )}
     </section>
   );
- 
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
@@ -1623,7 +1623,7 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
           <button className="rl-btn" onClick={() => openAdd(owner)}>Add pieces</button>
         </div>
       </div>
- 
+
       {total === 0 && (
         <div className="rl-empty">
           {OWNER_LABEL[owner]}'s closet is empty.
@@ -1631,17 +1631,17 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
           Add pieces by uploading photos from your phone.
         </div>
       )}
- 
+
       {closet.cats.map((c) => {
         const items = grouped[c] || [];
         if (!items.length) return null;
         return renderRow(c, items);
       })}
- 
+
       {Object.keys(grouped)
         .filter((c) => !closet.cats.includes(c) && grouped[c].length)
         .map((c) => renderRow(c, grouped[c]))}
- 
+
       <div style={{ marginTop: 30, borderTop: "1px solid var(--rule)", paddingTop: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         {showCatAdd ? (
           <div style={{ display: "flex", gap: 8, maxWidth: 380 }}>
@@ -1688,19 +1688,19 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
     </div>
   );
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  picker                                                             */
 /* ------------------------------------------------------------------ */
- 
+
 function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lockOwner, onClose, onConfirm }) {
   const [owner, setOwner] = useState(lockOwner || "her");
   const [sel, setSel] = useState(initial);
   const [tab, setTab] = useState("closet");
   const closet = closets[owner];
- 
+
   const toggle = (id) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
- 
+
   const grouped = useMemo(() => {
     const m = {};
     closet.items.forEach((it) => {
@@ -1708,25 +1708,25 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
     });
     return m;
   }, [closet]);
- 
+
   const ownerOutfits = outfits.filter((o) => o.owner === owner);
- 
+
   /* ---- deck ---- */
   const [deckCat, setDeckCat] = useState("all");
   const [deckIdx, setDeckIdx] = useState(0);
   const [drag, setDrag] = useState({ x: 0, y: 0, live: false });
   const dragFrom = useRef(null);
- 
+
   const deckList = useMemo(
     () => closet.items.filter((it) => deckCat === "all" || it.cat === deckCat),
     [closet.items, deckCat]
   );
- 
+
   useEffect(() => {
     setDeckIdx(0);
     setDrag({ x: 0, y: 0, live: false });
   }, [owner, deckCat, tab]);
- 
+
   const decide = (keep) => {
     const it = deckList[deckIdx];
     if (it) {
@@ -1737,7 +1737,7 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
     setDeckIdx((i) => i + 1);
     setDrag({ x: 0, y: 0, live: false });
   };
- 
+
   const onDown = (e) => {
     dragFrom.current = { x: e.clientX, y: e.clientY };
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
@@ -1754,7 +1754,7 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
     if (Math.abs(dx) > 84) decide(dx > 0);
     else setDrag({ x: 0, y: 0, live: false });
   };
- 
+
   return (
     <Sheet
       title={title}
@@ -1792,7 +1792,7 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
           ))}
         </div>
       </div>
- 
+
       {tab === "closet" && (
         <>
           {closet.items.length === 0 && <div className="rl-empty">Nothing in this closet yet.</div>}
@@ -1812,7 +1812,7 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
           ))}
         </>
       )}
- 
+
       {tab === "deck" && (() => {
         const cats = Array.from(new Set(closet.items.map((i) => i.cat)));
         const cur = deckList[deckIdx];
@@ -1820,7 +1820,7 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
         const after = deckList[deckIdx + 2];
         const dx = drag.x;
         const stamp = dx > 40 ? "keep" : dx < -40 ? "skip" : null;
- 
+
         return (
           <>
             <div className="rl-chips" style={{ marginBottom: 14 }}>
@@ -1833,7 +1833,7 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
                 </button>
               ))}
             </div>
- 
+
             {deckList.length === 0 ? (
               <div className="rl-empty">Nothing here to deal. Try another category.</div>
             ) : !cur ? (
@@ -1854,14 +1854,14 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
                   <span className="rl-deckcount rl-mono">
                     {deckIdx + 1} / {deckList.length}
                   </span>
- 
+
                   {after && (
                     <div className="rl-deckcard" style={{ transform: "rotate(-3.5deg) translateX(-8px)", opacity: 0.3 }} />
                   )}
                   {next && (
                     <div className="rl-deckcard" style={{ transform: "rotate(2deg) translateX(5px)", opacity: 0.55 }} />
                   )}
- 
+
                   <div
                     className="rl-deckcard top"
                     onPointerDown={onDown}
@@ -1889,7 +1889,7 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
                     </div>
                   </div>
                 </div>
- 
+
                 <div className="rl-deckbar">
                   <button className="rl-deckbtn" onClick={() => decide(false)} aria-label="Skip">✕</button>
                   <button
@@ -1910,7 +1910,7 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
           </>
         );
       })()}
- 
+
       {tab === "outfits" && (
         <>
           {ownerOutfits.length === 0 && (
@@ -1950,17 +1950,17 @@ function Picker({ closets, outfits, allItems, title, eyebrow, initial = [], lock
     </Sheet>
   );
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  outfits                                                            */
 /* ------------------------------------------------------------------ */
- 
+
 function Outfits({ closets, outfits, setOutfits, allItems }) {
   const [building, setBuilding] = useState(null); // {id?, owner, name, items}
   const [picking, setPicking] = useState(false);
- 
+
   const start = (owner) => setBuilding({ owner, name: "", items: [] });
- 
+
   const save = () => {
     const b = building;
     if (!b.items.length) return;
@@ -1971,7 +1971,7 @@ function Outfits({ closets, outfits, setOutfits, allItems }) {
     });
     setBuilding(null);
   };
- 
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
@@ -1984,7 +1984,7 @@ function Outfits({ closets, outfits, setOutfits, allItems }) {
           <button className="rl-btn ghost" onClick={() => start("his")}>New for him</button>
         </div>
       </div>
- 
+
       {outfits.length === 0 && (
         <div className="rl-empty">
           No outfits yet.
@@ -1992,7 +1992,7 @@ function Outfits({ closets, outfits, setOutfits, allItems }) {
           Group pieces you always wear together, then drop the whole look onto a trip day.
         </div>
       )}
- 
+
       <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
         {outfits.map((o) => {
           const pieces = o.items.map((id) => allItems[id]).filter(Boolean);
@@ -2022,7 +2022,7 @@ function Outfits({ closets, outfits, setOutfits, allItems }) {
           );
         })}
       </div>
- 
+
       {building && (
         <Sheet
           title={building.id ? "Edit outfit" : `New outfit — ${OWNER_LABEL[building.owner]}`}
@@ -2042,7 +2042,7 @@ function Outfits({ closets, outfits, setOutfits, allItems }) {
             placeholder="Dinner in Gstaad, Airport day…"
             onChange={(e) => setBuilding((b) => ({ ...b, name: e.target.value }))}
           />
- 
+
           <div className="rl-railhead" style={{ marginTop: 24 }}>
             <span className="rl-railname">Pieces</span>
             <span className="rl-raildots" />
@@ -2064,7 +2064,7 @@ function Outfits({ closets, outfits, setOutfits, allItems }) {
           )}
         </Sheet>
       )}
- 
+
       {picking && building && (
         <Picker
           closets={closets}
@@ -2080,11 +2080,11 @@ function Outfits({ closets, outfits, setOutfits, allItems }) {
     </div>
   );
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  trips                                                              */
 /* ------------------------------------------------------------------ */
- 
+
 /* Builds the weeks of a month as a Monday-first grid, including the
    leading and trailing days that fill out the first and last rows. */
 function monthMatrix(year, month) {
@@ -2104,16 +2104,16 @@ function monthMatrix(year, month) {
   }
   return weeks;
 }
- 
+
 const MONTH_FULL = ["January","February","March","April","May","June",
                     "July","August","September","October","November","December"];
 const DOW_SHORT = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
- 
+
 function TripCalendar({ trips, allItems, onOpen }) {
   const today = new Date();
   const todayKey = toYMD(today);
   const [selected, setSelected] = useState(null);
- 
+
   /* open on the month of the next trip, else the most recent, else now */
   const initial = useMemo(() => {
     const upcoming = trips
@@ -2124,15 +2124,15 @@ function TripCalendar({ trips, allItems, onOpen }) {
     const d = anchor ? parseYMD(anchor.start) : today;
     return { y: d.getFullYear(), m: d.getMonth() };
   }, [trips, todayKey]);
- 
+
   const [cursor, setCursor] = useState(initial);
   const weeks = monthMatrix(cursor.y, cursor.m);
- 
+
   const shift = (n) => {
     const d = new Date(cursor.y, cursor.m + n, 1);
     setCursor({ y: d.getFullYear(), m: d.getMonth() });
   };
- 
+
   /* every day of every trip, keyed by date */
   const byDate = useMemo(() => {
     const m = {};
@@ -2143,13 +2143,13 @@ function TripCalendar({ trips, allItems, onOpen }) {
     });
     return m;
   }, [trips]);
- 
+
   const monthTrips = trips.filter((t) => {
     const s = parseYMD(t.start), e = parseYMD(t.end || t.start);
     const a = new Date(cursor.y, cursor.m, 1), b = new Date(cursor.y, cursor.m + 1, 0);
     return s <= b && e >= a;
   });
- 
+
   return (
     <div>
       <div className="rl-calbar">
@@ -2166,11 +2166,11 @@ function TripCalendar({ trips, allItems, onOpen }) {
           Today
         </button>
       </div>
- 
+
       <div className="rl-caldow">
         {DOW_SHORT.map((d) => <span key={d}>{d}</span>)}
       </div>
- 
+
       <div className="rl-calgrid">
         {weeks.map((week, wi) =>
           week.map((date, di) => {
@@ -2195,7 +2195,7 @@ function TripCalendar({ trips, allItems, onOpen }) {
                     date.getDate()
                   )}
                 </span>
- 
+
                 {entries.map(({ trip, day }, i) => {
                   const isStart = trip.start === key;
                   const showName = isStart || di === 0;
@@ -2209,7 +2209,7 @@ function TripCalendar({ trips, allItems, onOpen }) {
                     </span>
                   );
                 })}
- 
+
                 {has && (() => {
                   const worn = [];
                   entries.forEach(({ day }) =>
@@ -2246,7 +2246,7 @@ function TripCalendar({ trips, allItems, onOpen }) {
           })
         )}
       </div>
- 
+
       {(() => {
         const entries = selected ? (byDate[selected] || []) : [];
         if (!selected || !entries.length) {
@@ -2277,7 +2277,7 @@ function TripCalendar({ trips, allItems, onOpen }) {
                       Open trip
                     </button>
                   </div>
- 
+
                   {day.events.length > 0 && (
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
                       {day.events.map((ev, i) => (
@@ -2293,7 +2293,7 @@ function TripCalendar({ trips, allItems, onOpen }) {
                       ))}
                     </div>
                   )}
- 
+
                   {worn.length === 0 ? (
                     <div className="rl-board-empty">
                       Nothing planned for this day yet.
@@ -2318,7 +2318,7 @@ function TripCalendar({ trips, allItems, onOpen }) {
           </div>
         );
       })()}
- 
+
       {monthTrips.length > 0 && (
         <div style={{ marginTop: 24 }}>
           {monthTrips.map((t) => {
@@ -2342,12 +2342,12 @@ function TripCalendar({ trips, allItems, onOpen }) {
     </div>
   );
 }
- 
+
 function TripList({ trips, setTrips, allItems, onOpen }) {
   const [creating, setCreating] = useState(false);
   const [mode, setMode] = useState("list");
   const [form, setForm] = useState({ name: "", start: "", end: "" });
- 
+
   const create = () => {
     const name = form.name.trim();
     if (!name || !form.start) return;
@@ -2364,9 +2364,9 @@ function TripList({ trips, setTrips, allItems, onOpen }) {
     setForm({ name: "", start: "", end: "" });
     onOpen(trip.id);
   };
- 
+
   const sorted = [...trips].sort((a, b) => (a.start < b.start ? -1 : 1));
- 
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
@@ -2385,7 +2385,7 @@ function TripList({ trips, setTrips, allItems, onOpen }) {
           <button className="rl-btn" onClick={() => setCreating(true)}>New trip</button>
         </div>
       </div>
- 
+
       {trips.length === 0 && (
         <div className="rl-empty">
           No trips planned.
@@ -2393,11 +2393,11 @@ function TripList({ trips, setTrips, allItems, onOpen }) {
           Start one and you'll get a hanging tag for every day of it.
         </div>
       )}
- 
+
       {trips.length > 0 && mode === "calendar" && (
         <TripCalendar trips={trips} allItems={allItems} onOpen={onOpen} />
       )}
- 
+
       {mode === "list" && (
       <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
         {sorted.map((t) => {
@@ -2427,7 +2427,7 @@ function TripList({ trips, setTrips, allItems, onOpen }) {
         })}
       </div>
       )}
- 
+
       {creating && (
         <Sheet
           title="New trip"
@@ -2479,17 +2479,17 @@ function TripList({ trips, setTrips, allItems, onOpen }) {
     </div>
   );
 }
- 
+
 function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, onBack }) {
   const [tab, setTab] = useState("days");
   const [picking, setPicking] = useState(null); // { dayId, owner? }
   const [eventFor, setEventFor] = useState(null);
   const [eventText, setEventText] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
- 
+
   const setDay = (dayId, patch) =>
     updateTrip({ ...trip, days: trip.days.map((d) => (d.id === dayId ? { ...d, ...patch } : d)) });
- 
+
   const addDay = () => {
     const last = trip.days[trip.days.length - 1];
     const base = last ? parseYMD(last.date) : new Date();
@@ -2501,16 +2501,16 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
       days: [...trip.days, { id: uid(), date, events: [], slots: [], note: "" }],
     });
   };
- 
+
   const removeDay = (dayId) =>
     updateTrip({ ...trip, days: trip.days.filter((d) => d.id !== dayId) });
- 
+
   const pieceIds = useMemo(() => {
     const s = [];
     trip.days.forEach((d) => d.slots.forEach((id) => { if (!s.includes(id)) s.push(id); }));
     return s;
   }, [trip]);
- 
+
   const packing = useMemo(() => {
     const groups = {};
     pieceIds.forEach((id) => {
@@ -2521,15 +2521,15 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
     });
     return groups;
   }, [pieceIds, allItems]);
- 
+
   const packedCount = pieceIds.filter((id) => trip.packed && trip.packed[id]).length;
- 
+
   return (
     <div>
       <button className="rl-btn quiet tiny" onClick={onBack} style={{ marginBottom: 18 }}>
         ← All trips
       </button>
- 
+
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div>
           <div className="rl-eyebrow" style={{ marginBottom: 4 }}>
@@ -2545,9 +2545,9 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
           ))}
         </div>
       </div>
- 
+
       <div style={{ borderTop: "1px solid var(--ink)", marginTop: 16 }} />
- 
+
       {tab === "days" && (
         <>
           <div className="rl-days">
@@ -2560,7 +2560,7 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
                     <div className="rl-tagdate rl-mono">{dayNum(d.date)}</div>
                   </div>
                 </div>
- 
+
                 {d.events.map((ev, i) => (
                   <div key={i} className="rl-postit">
                     {ev}
@@ -2574,7 +2574,7 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
                     </button>
                   </div>
                 ))}
- 
+
                 {eventFor === d.id ? (
                   <div style={{ marginTop: 8 }}>
                     <input
@@ -2607,7 +2607,7 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
                     + Note
                   </button>
                 )}
- 
+
                 <div style={{ marginTop: 12 }}>
                   <LookBoard
                     items={d.slots.map((id) => allItems[id]).filter(Boolean)}
@@ -2627,7 +2627,7 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
                     </div>
                   )}
                 </div>
- 
+
                 <button
                   className="rl-btn quiet tiny"
                   style={{ marginTop: 14, width: "100%", borderColor: "transparent" }}
@@ -2638,7 +2638,7 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
               </div>
             ))}
           </div>
- 
+
           <div style={{ marginTop: 22, display: "flex", gap: 8 }}>
             <button className="rl-btn ghost" onClick={addDay}>Add a day</button>
             {confirmDel ? (
@@ -2657,7 +2657,7 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
           </div>
         </>
       )}
- 
+
       {tab === "pair" && (
         <div style={{ marginTop: 24, maxWidth: 760 }}>
           <div className="rl-pair">
@@ -2716,7 +2716,7 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
           </div>
         </div>
       )}
- 
+
       {tab === "packing" && (
         <div style={{ marginTop: 24, maxWidth: 620 }}>
           {pieceIds.length === 0 ? (
@@ -2775,7 +2775,7 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
           )}
         </div>
       )}
- 
+
       {picking && (() => {
         const day = trip.days.find((d) => d.id === picking.dayId);
         if (!day) return null;
@@ -2808,11 +2808,11 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
     </div>
   );
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  gates                                                              */
 /* ------------------------------------------------------------------ */
- 
+
 function Centered({ children }) {
   return (
     <div className="rl" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -2823,7 +2823,7 @@ function Centered({ children }) {
     </div>
   );
 }
- 
+
 function NotConfigured() {
   return (
     <Centered>
@@ -2836,27 +2836,50 @@ function NotConfigured() {
     </Centered>
   );
 }
- 
+
 function SignIn() {
+  const [mode, setMode] = useState("password");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [state, setState] = useState("idle");
   const [msg, setMsg] = useState("");
- 
-  const send = async () => {
+
+  const friendly = (error) => {
+    const m = (error && error.message) || String(error);
+    if (/rate limit/i.test(m)) {
+      return "Supabase's built-in email is rate limited to a few messages an hour. Use a password instead, or wait an hour.";
+    }
+    if (/invalid login credentials/i.test(m)) {
+      return "That email and password don't match. Passwords are set in Supabase under Authentication \u2192 Users.";
+    }
+    return m;
+  };
+
+  const signInPassword = async () => {
     if (!/.+@.+\..+/.test(email)) { setMsg("That doesn't look like an email address."); return; }
-    setState("sending");
+    if (!password) { setMsg("Enter your password."); return; }
+    setState("working"); setMsg("");
+    const { error } = await supa.auth.signInWithPassword({ email: email.trim(), password });
+    if (error) { setState("idle"); setMsg(friendly(error)); return; }
+    // a session arriving flips the whole app over; nothing more to do here
+  };
+
+  const sendLink = async () => {
+    if (!/.+@.+\..+/.test(email)) { setMsg("That doesn't look like an email address."); return; }
+    setState("working"); setMsg("");
     const { error } = await supa.auth.signInWithOtp({
       email: email.trim(),
       options: { emailRedirectTo: window.location.href },
     });
-    if (error) { setState("idle"); setMsg(error.message); return; }
+    if (error) { setState("idle"); setMsg(friendly(error)); return; }
     setState("sent");
   };
- 
+
   return (
     <Centered>
       <div className="rl-eyebrow">Wardrobe</div>
       <div className="rl-display" style={{ fontSize: 28, margin: "8px 0 6px" }}>Sign in</div>
+
       {state === "sent" ? (
         <p style={{ fontSize: 13, lineHeight: 1.65, color: "var(--muted)" }}>
           Link sent to {email}. Open it on this device and you're in. It expires in an hour.
@@ -2864,36 +2887,67 @@ function SignIn() {
       ) : (
         <>
           <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--muted)", margin: "0 0 18px" }}>
-            No password. We email you a link.
+            {mode === "password"
+              ? "Use the password set for you in Supabase."
+              : "We'll email you a link. Limited to a few per hour."}
           </p>
+
           <input
             className="rl-field"
             type="email"
             autoFocus
+            autoComplete="username"
             value={email}
             placeholder="you@email.com"
             onChange={(e) => { setEmail(e.target.value); setMsg(""); }}
-            onKeyDown={(e) => e.key === "Enter" && send()}
+            onKeyDown={(e) => e.key === "Enter" && mode === "link" && sendLink()}
           />
+
+          {mode === "password" && (
+            <input
+              className="rl-field"
+              style={{ marginTop: 10 }}
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              placeholder="Password"
+              onChange={(e) => { setPassword(e.target.value); setMsg(""); }}
+              onKeyDown={(e) => e.key === "Enter" && signInPassword()}
+            />
+          )}
+
           <button
             className="rl-btn"
             style={{ marginTop: 12, width: "100%" }}
-            onClick={send}
-            disabled={state === "sending"}
+            onClick={mode === "password" ? signInPassword : sendLink}
+            disabled={state === "working"}
           >
-            {state === "sending" ? "Sending…" : "Email me a link"}
+            {state === "working" ? "\u2026" : mode === "password" ? "Sign in" : "Email me a link"}
           </button>
-          {msg && <div style={{ marginTop: 12, fontSize: 12, color: "#9B2C1E", lineHeight: 1.5 }}>{msg}</div>}
+
+          <button
+            className="rl-btn quiet tiny"
+            style={{ marginTop: 10, width: "100%" }}
+            onClick={() => { setMode(mode === "password" ? "link" : "password"); setMsg(""); }}
+          >
+            {mode === "password" ? "Email me a link instead" : "Use a password instead"}
+          </button>
+
+          {msg && (
+            <div style={{ marginTop: 12, fontSize: 12, color: "var(--accent)", lineHeight: 1.55 }}>
+              {msg}
+            </div>
+          )}
         </>
       )}
     </Centered>
   );
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  app                                                                */
 /* ------------------------------------------------------------------ */
- 
+
 function App({ session }) {
   const [ready, setReady] = useState(false);
   const [view, setView] = useState("closet");
@@ -2908,11 +2962,11 @@ function App({ session }) {
   const [detail, setDetail] = useState(null);
   const [status, setStatus] = useState("");
   const catsRef = useRef(null);
- 
+
   const flash = (t) => { setStatus(t); setTimeout(() => setStatus(""), 1800); };
- 
+
   const [loadError, setLoadError] = useState(null);
- 
+
   const load = useCallback(async () => {
     setLoadError(null);
     try {
@@ -2929,9 +2983,9 @@ function App({ session }) {
       setLoadError(msg + code + hint);
     }
   }, []);
- 
+
   useEffect(() => { load(); }, [load]);
- 
+
   /* live sync between the two of you */
   useEffect(() => {
     if (!supa) return;
@@ -2946,7 +3000,7 @@ function App({ session }) {
       .subscribe();
     return () => { clearTimeout(timer); supa.removeChannel(ch); };
   }, [load]);
- 
+
   /* categories persist when they change */
   const setClosets = (updater) => {
     setClosetsState((prev) => {
@@ -2961,7 +3015,7 @@ function App({ session }) {
       return next;
     });
   };
- 
+
   /* trips + outfits persist by diffing */
   const setTrips = (updater) => {
     setTripsState((prev) => {
@@ -2977,7 +3031,7 @@ function App({ session }) {
       return next;
     });
   };
- 
+
   const setOutfits = (updater) => {
     setOutfitsState((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
@@ -2990,14 +3044,14 @@ function App({ session }) {
       return next;
     });
   };
- 
+
   const allItems = useMemo(() => {
     const m = {};
     closets.her.items.forEach((i) => (m[i.id] = i));
     closets.his.items.forEach((i) => (m[i.id] = i));
     return m;
   }, [closets]);
- 
+
   const addItems = async (items) => {
     const owner = items[0].owner;
     setClosetsState((cs) => ({ ...cs, [owner]: { ...cs[owner], items: [...cs[owner].items, ...items] } }));
@@ -3005,7 +3059,7 @@ function App({ session }) {
     flash(error ? "Couldn't save — check your connection" : `Added ${items.length}`);
     if (error) load();
   };
- 
+
   const saveItem = async (item) => {
     setClosetsState((cs) => ({
       ...cs,
@@ -3014,7 +3068,7 @@ function App({ session }) {
     const { error } = await db.updateItem(item);
     if (error) { flash("Couldn't save"); load(); }
   };
- 
+
   const deleteItem = async (id) => {
     setClosetsState((cs) => ({
       her: { ...cs.her, items: cs.her.items.filter((i) => i.id !== id) },
@@ -3032,15 +3086,15 @@ function App({ session }) {
     );
     await db.deleteItem(id);
   };
- 
+
   const trip = trips.find((t) => t.id === openTrip);
   const size = approxSize(closets.her) + approxSize(closets.his);
   const heavy = size > 6_000_000;
- 
+
   return (
     <div className="rl">
       <style>{CSS}</style>
- 
+
       <header className="rl-top">
         <div className="rl-topin">
           <div className="rl-brand">
@@ -3063,7 +3117,7 @@ function App({ session }) {
           </nav>
         </div>
       </header>
- 
+
       <main className="rl-wrap">
         {!ready ? (
           loadError ? (
@@ -3096,19 +3150,19 @@ function App({ session }) {
                 The closet is {fmtBytes(size)}. Still fine, but worth clearing out pieces you no longer wear.
               </div>
             )}
- 
+
             {view === "closet" && (
               <Closet closets={closets} setClosets={setClosets} openItem={setDetail} openAdd={setAdding} />
             )}
- 
+
             {view === "outfits" && (
               <Outfits closets={closets} outfits={outfits} setOutfits={setOutfits} allItems={allItems} />
             )}
- 
+
             {view === "trips" && !trip && (
               <TripList trips={trips} setTrips={setTrips} allItems={allItems} onOpen={setOpenTrip} />
             )}
- 
+
             {view === "trips" && trip && (
               <TripDetail
                 trip={trip}
@@ -3120,7 +3174,7 @@ function App({ session }) {
                 onBack={() => setOpenTrip(null)}
               />
             )}
- 
+
             <footer style={{ marginTop: 60, paddingTop: 16, borderTop: "1px solid var(--rule)", fontSize: 11, color: "var(--muted)", lineHeight: 1.7, display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
               <span>
                 Signed in as {session.user.email}. Changes appear on the other person's screen within
@@ -3136,7 +3190,7 @@ function App({ session }) {
           </>
         )}
       </main>
- 
+
       {adding && (
         <AddPieces
           owner={adding}
@@ -3146,7 +3200,7 @@ function App({ session }) {
           onAdd={addItems}
         />
       )}
- 
+
       {detail && (
         <ItemDetail
           item={detail}
@@ -3159,31 +3213,29 @@ function App({ session }) {
     </div>
   );
 }
- 
+
 /* ------------------------------------------------------------------ */
 /*  boot                                                               */
 /* ------------------------------------------------------------------ */
- 
+
 function Root() {
   const [session, setSession] = useState(undefined);
- 
+
   useEffect(() => {
     if (!supa) return;
     supa.auth.getSession().then(({ data }) => setSession(data.session || null));
     const { data: sub } = supa.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
- 
+
   if (!CONFIGURED) return <NotConfigured />;
   if (session === undefined) return <Centered><div className="rl-eyebrow">Checking…</div></Centered>;
   if (!session) return <SignIn />;
   return <App session={session} />;
 }
- 
+
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
- 
+
 </script>
 </body>
 </html>
- 
-1Password menu is available. Press down arrow to select.
