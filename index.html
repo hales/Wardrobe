@@ -271,60 +271,74 @@ async function processPhoto(file, opts) {
   return { img: data };
 }
 
-function rgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  const d = max - min;
-  if (d === 0) return { h: 0, s: 0, l };
-  const s = d / (1 - Math.abs(2 * l - 1));
-  let h;
-  switch (max) {
-    case r: h = ((g - b) / d + (g < b ? 6 : 0)); break;
-    case g: h = (b - r) / d + 2; break;
-    default: h = (r - g) / d + 4;
-  }
-  return { h: h * 60, s, l };
-}
+/* Colour words a piece's name might carry, each with a rough hue (for
+   the colourful bucket) or lightness (for the neutral one). Saturation
+   just has to land on the right side of the neutral/colourful cutoff
+   below — the exact number doesn't otherwise affect sort order. */
+const COLOR_WORDS = {
+  white: { s: 0.05, l: 0.97 },
+  ivory: { s: 0.05, l: 0.94 },
+  cream: { s: 0.05, l: 0.93 },
+  "off white": { s: 0.05, l: 0.92 },
+  beige: { s: 0.05, l: 0.80 },
+  silver: { s: 0.05, l: 0.75 },
+  tan: { s: 0.05, l: 0.72 },
+  khaki: { s: 0.05, l: 0.68 },
+  camel: { s: 0.05, l: 0.62 },
+  taupe: { s: 0.05, l: 0.55 },
+  grey: { s: 0.05, l: 0.50 },
+  gray: { s: 0.05, l: 0.50 },
+  charcoal: { s: 0.05, l: 0.25 },
+  black: { s: 0.05, l: 0.04 },
 
-/* A cheap stand-in for a garment's colour: shrink the photo to a few
-   pixels and average what's left. Good enough to sort a closet by —
-   not meant to name the exact shade. */
-function sampleColor(src) {
-  return new Promise((resolve) => {
-    if (!src) return resolve(null);
-    const img = new Image();
-    img.onerror = () => resolve(null);
-    img.onload = () => {
-      try {
-        const size = 16;
-        const c = document.createElement("canvas");
-        c.width = size; c.height = size;
-        const ctx = c.getContext("2d", { willReadFrequently: true });
-        ctx.drawImage(img, 0, 0, size, size);
-        const d = ctx.getImageData(0, 0, size, size).data;
-        let r = 0, g = 0, b = 0, n = 0;
-        for (let i = 0; i < d.length; i += 4) {
-          if (d[i + 3] < 16) continue; // skip any leftover transparency
-          r += d[i]; g += d[i + 1]; b += d[i + 2];
-          n++;
-        }
-        resolve(n ? rgbToHsl(r / n, g / n, b / n) : null);
-      } catch (e) {
-        resolve(null);
-      }
-    };
-    img.src = src;
-  });
+  red: { h: 0, s: 0.6, l: 0.5 },
+  burgundy: { h: 350, s: 0.6, l: 0.5 },
+  maroon: { h: 350, s: 0.6, l: 0.5 },
+  wine: { h: 350, s: 0.6, l: 0.5 },
+  pink: { h: 330, s: 0.6, l: 0.5 },
+  magenta: { h: 320, s: 0.6, l: 0.5 },
+  fuchsia: { h: 320, s: 0.6, l: 0.5 },
+  purple: { h: 275, s: 0.6, l: 0.5 },
+  violet: { h: 270, s: 0.6, l: 0.5 },
+  lavender: { h: 265, s: 0.6, l: 0.5 },
+  navy: { h: 225, s: 0.6, l: 0.5 },
+  blue: { h: 215, s: 0.6, l: 0.5 },
+  denim: { h: 210, s: 0.6, l: 0.5 },
+  teal: { h: 180, s: 0.6, l: 0.5 },
+  turquoise: { h: 175, s: 0.6, l: 0.5 },
+  mint: { h: 150, s: 0.6, l: 0.5 },
+  green: { h: 120, s: 0.6, l: 0.5 },
+  olive: { h: 70, s: 0.6, l: 0.5 },
+  mustard: { h: 48, s: 0.6, l: 0.5 },
+  yellow: { h: 55, s: 0.6, l: 0.5 },
+  gold: { h: 45, s: 0.6, l: 0.5 },
+  orange: { h: 30, s: 0.6, l: 0.5 },
+  coral: { h: 15, s: 0.6, l: 0.5 },
+  rust: { h: 18, s: 0.6, l: 0.5 },
+  terracotta: { h: 20, s: 0.6, l: 0.5 },
+  brown: { h: 25, s: 0.6, l: 0.5 },
+  chocolate: { h: 22, s: 0.6, l: 0.5 },
+};
+const COLOR_WORD_LIST = Object.keys(COLOR_WORDS).sort((a, b) => b.length - a.length);
+
+/* Reads a colour straight off the name someone typed — "Black silk
+   slip" sorts as black — rather than sampling the photo itself.
+   Punctuation is flattened first so "Black, silk…" still matches. */
+function hslFromName(name) {
+  const cleaned = ` ${String(name || "").toLowerCase().replace(/[^a-z]+/g, " ")} `;
+  for (const word of COLOR_WORD_LIST) {
+    if (cleaned.includes(` ${word} `)) return COLOR_WORDS[word];
+  }
+  return null;
 }
 
 /* Whites, greys and blacks don't have a meaningful hue, so they'd
-   otherwise scatter randomly through a hue sort. Bucket them first
-   (light to dark), then run the rest around the colour wheel. */
+   otherwise scatter randomly through a hue sort. Bucket them first,
+   darkest to lightest, then run the rest around the colour wheel. */
 function colorSortKey(hsl) {
   if (!hsl) return [2, 0];
   const { h, s, l } = hsl;
-  if (s < 0.15 || l < 0.06 || l > 0.95) return [0, 1 - l];
+  if (s < 0.15 || l < 0.06 || l > 0.95) return [0, l];
   return [1, h];
 }
 function compareColorKey(a, b) {
@@ -1375,31 +1389,16 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
   const [newCat, setNewCat] = useState("");
   const [showCatAdd, setShowCatAdd] = useState(false);
   const [note, setNote] = useState("");
-  const [colors, setColors] = useState({}); // item id -> {h,s,l} | null
-
-  useEffect(() => {
-    const toSample = closet.items.filter((it) => it.img && !(it.id in colors));
-    if (!toSample.length) return;
-    let cancelled = false;
-    Promise.all(toSample.map((it) => sampleColor(it.img).then((hsl) => [it.id, hsl]))).then((pairs) => {
-      if (cancelled) return;
-      setColors((c) => {
-        const next = { ...c };
-        pairs.forEach(([id, hsl]) => { next[id] = hsl; });
-        return next;
-      });
-    });
-    return () => { cancelled = true; };
-  }, [closet.items]);
 
   const visibleItems = useMemo(
     () => (locFilter === "all" ? closet.items : closet.items.filter((it) => (it.loc || "CUN") === locFilter)),
     [closet.items, locFilter]
   );
 
-  /* Sorted by colour within each rail — whites/greys/blacks first, then
-     round the colour wheel. Pieces not sampled yet keep their place at
-     the end rather than jumping around once their colour resolves. */
+  /* Sorted by colour within each rail, read off each piece's name —
+     whites/greys/blacks first (darkest to lightest), then the rest
+     around the colour wheel. Anything without a colour word in its
+     name sits at the end. */
   const grouped = useMemo(() => {
     const m = {};
     closet.cats.forEach((c) => (m[c] = []));
@@ -1409,7 +1408,7 @@ function Closet({ closets, setClosets, openItem, openAdd }) {
     });
     Object.keys(m).forEach((c) => {
       m[c] = [...m[c]].sort((a, b) =>
-        compareColorKey(colorSortKey(colors[a.id]), colorSortKey(colors[b.id]))
+        compareColorKey(colorSortKey(hslFromName(a.name)), colorSortKey(hslFromName(b.name)))
       );
     });
     return m;
