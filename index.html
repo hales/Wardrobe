@@ -2206,6 +2206,16 @@ function TripCalendar({ trips, allItems, onOpen }) {
                     <span className="rl-eyebrow">
                       {dayLabel(day.date)} {dayNum(day.date)}
                     </span>
+                    {day.location && (
+                      <span
+                        style={{
+                          background: day.locationColor || LOCATION_COLORS[0], color: "var(--ink)",
+                          fontSize: 10, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
+                        }}
+                      >
+                        {day.location}
+                      </span>
+                    )}
                     <button
                       className="rl-btn ghost tiny"
                       style={{ marginLeft: "auto" }}
@@ -2692,6 +2702,16 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
                 <div key={d.id} className="rl-pairday">
                   <div className="rl-pairbar" data-event={hasEvent ? "true" : "false"}>
                     <span className="d">{dayLabel(d.date)}</span>
+                    {d.location && (
+                      <span
+                        style={{
+                          background: d.locationColor || LOCATION_COLORS[0], color: "var(--ink)",
+                          fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 999,
+                        }}
+                      >
+                        {d.location}
+                      </span>
+                    )}
                     {hasEvent && <span className="e">{d.events.join(" · ")}</span>}
                     <span className="n mono">{dayNum(d.date)}</span>
                   </div>
