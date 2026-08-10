@@ -23,10 +23,22 @@ begin
 exception when duplicate_object then null;
 end $$;
 
+-- Adds the detail-preview backdrop column to a table created before it existed.
+alter table items add column if not exists bg text not null default 'white';
+do $$
+begin
+  alter table items add constraint items_bg_check check (bg in ('white', 'gray'));
+exception when duplicate_object then null;
+end $$;
+
 create table if not exists closet_settings (
   owner  text primary key check (owner in ('her', 'his')),
   cats   jsonb not null default '[]'::jsonb
 );
+
+-- Adds the manual piece-order column to a table created before it existed.
+-- No-ops on a fresh install, since the create table above doesn't need it.
+alter table closet_settings add column if not exists item_order jsonb not null default '{}'::jsonb;
 
 create table if not exists trips (
   id          text primary key,

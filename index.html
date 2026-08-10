@@ -68,16 +68,22 @@ const db = {
       const row = (settings.data || []).find((r) => r.owner === owner);
       return row && Array.isArray(row.cats) && row.cats.length ? row.cats : null;
     };
+    const orderFor = (owner) => {
+      const row = (settings.data || []).find((r) => r.owner === owner);
+      return row && row.item_order && typeof row.item_order === "object" ? row.item_order : {};
+    };
 
     return {
       closets: {
         her: {
           items: (items.data || []).filter((r) => r.owner === "her").map(fromRow),
           cats: catsFor("her") || DEFAULT_CATS.her,
+          order: orderFor("her"),
         },
         his: {
           items: (items.data || []).filter((r) => r.owner === "his").map(fromRow),
           cats: catsFor("his") || DEFAULT_CATS.his,
+          order: orderFor("his"),
         },
       },
       trips: (trips.data || []).map((r) => r.data).filter(Boolean),
@@ -91,7 +97,7 @@ const db = {
   },
   updateItem(it) {
     touch();
-    return supa.from("items").update({ owner: it.owner, cat: it.cat, loc: it.loc, name: it.name, img: it.img }).eq("id", it.id);
+    return supa.from("items").update({ owner: it.owner, cat: it.cat, loc: it.loc, name: it.name, img: it.img, bg: it.bg || "white" }).eq("id", it.id);
   },
   deleteItem(id) {
     touch();
@@ -100,6 +106,10 @@ const db = {
   saveCats(owner, cats) {
     touch();
     return supa.from("closet_settings").upsert({ owner, cats });
+  },
+  saveOrder(owner, order) {
+    touch();
+    return supa.from("closet_settings").upsert({ owner, item_order: order });
   },
   saveTrip(t) {
     touch();
@@ -120,7 +130,7 @@ const db = {
 };
 
 function toRow(it) {
-  return { id: it.id, owner: it.owner, cat: it.cat, loc: it.loc || "CUN", name: it.name || "", img: it.img || "" };
+  return { id: it.id, owner: it.owner, cat: it.cat, loc: it.loc || "CUN", name: it.name || "", img: it.img || "", bg: it.bg || "white" };
 }
 function fromRow(r) {
   return {
@@ -130,6 +140,7 @@ function fromRow(r) {
     loc: r.loc || "CUN",
     name: r.name || "",
     img: r.img || "",
+    bg: r.bg || "white",
     addedAt: r.created_at ? Date.parse(r.created_at) : 0,
   };
 }
@@ -152,6 +163,8 @@ const DEFAULT_CATS = {
   her: [
     "Dresses",
     "Tops",
+    "Sweaters",
+    "Matching sets",
     "Jackets",
     "Skirts",
     "Shorts",
@@ -508,6 +521,8 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
   height: 112px; min-width: 64px; max-width: 220px;
 }
 .rl-rack .rl-cell img { height: 100%; width: auto; }
+.rl-dragcell { touch-action: manipulation; cursor: grab; transition: opacity .15s ease; }
+.rl-dragcell[data-dragging="true"] { opacity: .35; cursor: grabbing; }
 .rl-cell img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .rl-cell[data-sel="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
 .rl-cell .rl-check {
@@ -1212,7 +1227,7 @@ function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
   const [cat, setCat] = useState(item.cat);
   const [loc, setLoc] = useState(item.loc || "CUN");
   const [confirm, setConfirm] = useState(false);
-  const [previewBg, setPreviewBg] = useState("white");
+  const [previewBg, setPreviewBg] = useState(item.bg === "gray" ? "gray" : "white");
 
   return (
     <Sheet
@@ -1237,7 +1252,7 @@ function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
                 Remove
               </button>
               <button className="rl-btn ghost" onClick={onClose}>Cancel</button>
-              <button className="rl-btn" onClick={() => { onSave({ ...item, name: name.trim(), cat, loc }); onClose(); }}>
+              <button className="rl-btn" onClick={() => { onSave({ ...item, name: name.trim(), cat, loc, bg: previewBg }); onClose(); }}>
                 Save
               </button>
             </>
@@ -1256,7 +1271,7 @@ function ItemDetail({ item, cats, onClose, onSave, onDelete }) {
       </div>
       <div
         style={{
-          background: previewBg === "gray" ? "#E8E8E6" : "#fff",
+          background: previewBg === "gray" ? "#D6D6D3" : "#fff",
           border: "1px solid var(--rule)", padding: 24, display: "flex", justifyContent: "center", marginBottom: 22,
         }}
       >
@@ -1421,10 +1436,18 @@ function Closet({ closets, setClosets, openItem, openAdd, defaultOwner, hideAdd 
     [closet.items, locFilter]
   );
 
+  const byId = useMemo(() => {
+    const m = {};
+    closet.items.forEach((it) => (m[it.id] = it));
+    return m;
+  }, [closet.items]);
+
   /* Sorted by colour within each rail, read off each piece's name —
      whites/greys/blacks first (darkest to lightest), then the rest
-     around the colour wheel. Anything without a colour word in its
-     name sits at the end. */
+     around the colour wheel — unless a manual drag order was saved for
+     that rail, in which case it wins. Pieces the manual order doesn't
+     know about yet (just added, or filtered back in) fall in afterward,
+     colour-sorted as before. */
   const grouped = useMemo(() => {
     const m = {};
     closet.cats.forEach((c) => (m[c] = []));
@@ -1432,13 +1455,26 @@ function Closet({ closets, setClosets, openItem, openAdd, defaultOwner, hideAdd 
       if (!m[it.cat]) m[it.cat] = [];
       m[it.cat].push(it);
     });
+    const order = closet.order || {};
     Object.keys(m).forEach((c) => {
-      m[c] = [...m[c]].sort((a, b) =>
+      const colorSorted = [...m[c]].sort((a, b) =>
         compareColorKey(colorSortKey(hslFromName(a.name)), colorSortKey(hslFromName(b.name)))
       );
+      const saved = order[c];
+      if (!saved || !saved.length) {
+        m[c] = colorSorted;
+        return;
+      }
+      const remaining = new Map(colorSorted.map((it) => [it.id, it]));
+      const ordered = [];
+      saved.forEach((id) => {
+        if (remaining.has(id)) { ordered.push(remaining.get(id)); remaining.delete(id); }
+      });
+      colorSorted.forEach((it) => { if (remaining.has(it.id)) ordered.push(it); });
+      m[c] = ordered;
     });
     return m;
-  }, [closet.cats, visibleItems]);
+  }, [closet.cats, visibleItems, closet.order]);
 
   const total = visibleItems.length;
 
@@ -1450,24 +1486,119 @@ function Closet({ closets, setClosets, openItem, openAdd, defaultOwner, hideAdd 
     setShowCatAdd(false);
   };
 
-  const renderRow = (c, items) => (
-    <section key={c} style={{ marginBottom: 34 }}>
-      <div className="rl-railhead">
-        <span className="rl-railname">{c}</span>
-        <span className="rl-raildots" />
-        <span className="rl-railcount rl-mono">{String(items.length).padStart(2, "0")}</span>
-      </div>
-      {layout === "carousel" ? (
-        <Carousel items={items} onPick={openItem} />
-      ) : (
-        <div className="rl-rack">
-          {items.map((it) => (
-            <Thumb key={it.id} item={it} onClick={() => openItem(it)} />
-          ))}
+  /* ---- drag to reorder (grid layout only) ----
+     Long-press a thumbnail to pick it up — a quick tap still opens the
+     item, and a normal scroll swipe is left alone since it never holds
+     still long enough to trigger the press. Once picked up, dragging
+     over another piece in the same rail swaps it into that spot; the
+     new order is saved to closet_settings on release. */
+  const [drag, setDrag] = useState(null); // { cat, ids, activeId }
+  const pressRef = useRef(null);
+  const suppressClickRef = useRef(false);
+  const LONG_PRESS_MS = 380;
+  const MOVE_CANCEL_PX = 10;
+
+  const commitOrder = (cat, ids) => {
+    setClosets((cs) => ({
+      ...cs,
+      [owner]: { ...cs[owner], order: { ...(cs[owner].order || {}), [cat]: ids } },
+    }));
+  };
+
+  const clearPress = () => {
+    if (pressRef.current && pressRef.current.timer) clearTimeout(pressRef.current.timer);
+    pressRef.current = null;
+  };
+
+  const onThumbPointerDown = (e, cat, ids, id) => {
+    clearPress();
+    const p = { cat, id, x: e.clientX, y: e.clientY, engaged: false, pointerId: e.pointerId, target: e.currentTarget };
+    p.timer = setTimeout(() => {
+      p.engaged = true;
+      setDrag({ cat, ids: ids.slice(), activeId: id });
+      try { p.target.setPointerCapture(p.pointerId); } catch (err) {}
+    }, LONG_PRESS_MS);
+    pressRef.current = p;
+  };
+
+  const onThumbPointerMove = (e) => {
+    const p = pressRef.current;
+    if (!p) return;
+    if (!p.engaged) {
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > MOVE_CANCEL_PX) clearPress();
+      return;
+    }
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const cell = el && el.closest && el.closest("[data-drag-id]");
+    if (!cell) return;
+    const overId = cell.getAttribute("data-drag-id");
+    if (overId === p.id) return;
+    setDrag((d) => {
+      if (!d || d.cat !== p.cat) return d;
+      const from = d.ids.indexOf(p.id);
+      const to = d.ids.indexOf(overId);
+      if (from === -1 || to === -1 || from === to) return d;
+      const next = d.ids.slice();
+      next.splice(from, 1);
+      next.splice(to, 0, p.id);
+      return { ...d, ids: next };
+    });
+  };
+
+  const onThumbPointerUp = () => {
+    const p = pressRef.current;
+    if (p && p.engaged) {
+      suppressClickRef.current = true;
+      setDrag((d) => {
+        if (d) commitOrder(d.cat, d.ids);
+        return null;
+      });
+    }
+    clearPress();
+  };
+
+  const onThumbClickCapture = (e) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  const renderRow = (c, items) => {
+    const dragActive = drag && drag.cat === c;
+    const displayItems = dragActive ? drag.ids.map((id) => byId[id]).filter(Boolean) : items;
+    return (
+      <section key={c} style={{ marginBottom: 34 }}>
+        <div className="rl-railhead">
+          <span className="rl-railname">{c}</span>
+          <span className="rl-raildots" />
+          <span className="rl-railcount rl-mono">{String(items.length).padStart(2, "0")}</span>
         </div>
-      )}
-    </section>
-  );
+        {layout === "carousel" ? (
+          <Carousel items={items} onPick={openItem} />
+        ) : (
+          <div className="rl-rack">
+            {displayItems.map((it) => (
+              <div
+                key={it.id}
+                className="rl-dragcell"
+                data-drag-id={it.id}
+                data-dragging={drag && drag.activeId === it.id ? "true" : "false"}
+                onPointerDown={(e) => onThumbPointerDown(e, c, items.map((x) => x.id), it.id)}
+                onPointerMove={onThumbPointerMove}
+                onPointerUp={onThumbPointerUp}
+                onPointerCancel={onThumbPointerUp}
+                onClickCapture={onThumbClickCapture}
+              >
+                <Thumb item={it} onClick={() => openItem(it)} />
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    );
+  };
 
   return (
     <div>
@@ -2993,8 +3124,8 @@ function App({ session }) {
   const [view, setView] = useState("closet");
   const [openTrip, setOpenTrip] = useState(null);
   const [closets, setClosetsState] = useState({
-    her: { items: [], cats: DEFAULT_CATS.her },
-    his: { items: [], cats: DEFAULT_CATS.his },
+    her: { items: [], cats: DEFAULT_CATS.her, order: {} },
+    his: { items: [], cats: DEFAULT_CATS.his, order: {} },
   });
   const [trips, setTripsState] = useState([]);
   const [outfits, setOutfitsState] = useState([]);
@@ -3002,6 +3133,7 @@ function App({ session }) {
   const [detail, setDetail] = useState(null);
   const [status, setStatus] = useState("");
   const catsRef = useRef(null);
+  const orderRef = useRef(null);
   const isGCF = (session.user.email || "").toLowerCase().startsWith("gcorderofuentes");
 
   const flash = (t) => { setStatus(t); setTimeout(() => setStatus(""), 1800); };
@@ -3016,6 +3148,7 @@ function App({ session }) {
       setTripsState(d.trips);
       setOutfitsState(d.outfits);
       catsRef.current = { her: d.closets.her.cats, his: d.closets.his.cats };
+      orderRef.current = { her: d.closets.her.order, his: d.closets.his.order };
       setReady(true);
     } catch (e) {
       const msg = (e && (e.message || e.error_description)) || String(e);
@@ -3042,15 +3175,20 @@ function App({ session }) {
     return () => { clearTimeout(timer); supa.removeChannel(ch); };
   }, [load]);
 
-  /* categories persist when they change */
+  /* categories and manual piece order persist when they change */
   const setClosets = (updater) => {
     setClosetsState((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       ["her", "his"].forEach((o) => {
-        const before = catsRef.current ? catsRef.current[o] : null;
-        if (before && JSON.stringify(before) !== JSON.stringify(next[o].cats)) {
+        const beforeCats = catsRef.current ? catsRef.current[o] : null;
+        if (beforeCats && JSON.stringify(beforeCats) !== JSON.stringify(next[o].cats)) {
           db.saveCats(o, next[o].cats);
           catsRef.current[o] = next[o].cats;
+        }
+        const beforeOrder = orderRef.current ? orderRef.current[o] : null;
+        if (beforeOrder && JSON.stringify(beforeOrder) !== JSON.stringify(next[o].order)) {
+          db.saveOrder(o, next[o].order);
+          orderRef.current[o] = next[o].order;
         }
       });
       return next;
