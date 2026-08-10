@@ -525,6 +525,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 .rl-dragcell[data-dragging="true"] { opacity: .35; cursor: grabbing; }
 .rl-cell img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .rl-cell[data-sel="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
+.rl-cell[data-bg="gray"] { background: #D6D6D3; }
 .rl-cell .rl-check {
   position: absolute; top: 5px; right: 5px;
   width: 17px; height: 17px; background: var(--ink); color: var(--paper);
@@ -735,6 +736,7 @@ textarea.rl-field { resize: vertical; min-height: 84px; line-height: 1.5; }
 }
 .rl-slide img { height: 100%; width: auto; max-width: 100%; object-fit: contain; display: block; }
 .rl-slide[data-sel="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
+.rl-slide[data-bg="gray"] { background: #D6D6D3; }
 .rl-arrow {
   position: absolute; top: 50%; transform: translateY(-50%);
   width: 32px; height: 32px; border: 1px solid var(--ink); border-radius: 50%;
@@ -998,6 +1000,7 @@ function Thumb({ item, onClick, selected, showOwner }) {
     <button
       className="rl-cell"
       data-sel={selected ? "true" : "false"}
+      data-bg={item.bg === "gray" ? "gray" : undefined}
       onClick={onClick}
       title={item.name || item.cat}
     >
@@ -1409,6 +1412,7 @@ function Carousel({ items, onPick, selected, size = 124 }) {
             key={it.id}
             className="rl-slide"
             data-sel={selected && selected.includes(it.id) ? "true" : "false"}
+            data-bg={it.bg === "gray" ? "gray" : undefined}
             onClick={() => onPick(it)}
             title={it.name || it.cat}
           >
