@@ -3201,12 +3201,12 @@ function App({ session }) {
       ["her", "his"].forEach((o) => {
         const beforeCats = catsRef.current ? catsRef.current[o] : null;
         if (beforeCats && JSON.stringify(beforeCats) !== JSON.stringify(next[o].cats)) {
-          db.saveCats(o, next[o].cats);
+          db.saveCats(o, next[o].cats).then(({ error }) => { if (error) onSaveFail(error); });
           catsRef.current[o] = next[o].cats;
         }
         const beforeOrder = orderRef.current ? orderRef.current[o] : null;
         if (beforeOrder && JSON.stringify(beforeOrder) !== JSON.stringify(next[o].order)) {
-          db.saveOrder(o, next[o].order);
+          db.saveOrder(o, next[o].order).then(({ error }) => { if (error) onSaveFail(error); });
           orderRef.current[o] = next[o].order;
         }
       });
