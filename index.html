@@ -185,6 +185,12 @@ const DEFAULT_CATS = {
   ],
 };
 
+const PACKING_ESSENTIALS = [
+  { group: "Toiletries", items: ["Toothbrush", "Toothpaste", "Hair extensions", "Straightener", "Contacts"] },
+  { group: "Chloe", items: ["Nail file", "Shampoo", "Moisturizer", "Brush", "Hair clips/bands", "Carrier", "Stroller bag", "Car seat bag"] },
+  { group: "Other", items: ["Passports", "Phone charger"] },
+];
+
 
 const OWNER_LABEL = { her: "Her", his: "His" };
 const LOCS = ["CUN", "NYC"];
@@ -2633,7 +2639,15 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
     return groups;
   }, [pieceIds, allItems]);
 
-  const packedCount = pieceIds.filter((id) => trip.packed && trip.packed[id]).length;
+  const essentialKeys = useMemo(() => {
+    const keys = [];
+    PACKING_ESSENTIALS.forEach((g) => g.items.forEach((it) => keys.push(`ess:${g.group}:${it}`)));
+    return keys;
+  }, []);
+  const totalCount = pieceIds.length + essentialKeys.length;
+  const packedCount =
+    pieceIds.filter((id) => trip.packed && trip.packed[id]).length +
+    essentialKeys.filter((k) => trip.packed && trip.packed[k]).length;
 
   return (
     <div>
@@ -2649,7 +2663,7 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
           <div className="rl-display" style={{ fontSize: 38 }}>{trip.name}</div>
         </div>
         <div className="rl-chips">
-          {[["days", "Days"], ["pair", "Both"], ["packing", `Packing ${packedCount}/${pieceIds.length}`]].map(([k, l]) => (
+          {[["days", "Days"], ["pair", "Both"], ["packing", `Packing ${packedCount}/${totalCount}`]].map(([k, l]) => (
             <button key={k} className="rl-chip" data-on={tab === k ? "true" : "false"} onClick={() => setTab(k)}>
               {l}
             </button>
@@ -2908,61 +2922,89 @@ function TripDetail({ trip, updateTrip, deleteTrip, closets, outfits, allItems, 
         </div>
       )}
 
-      {tab === "packing" && (
+            {tab === "packing" && (
         <div style={{ marginTop: 24, maxWidth: 620 }}>
-          {pieceIds.length === 0 ? (
-            <div className="rl-empty">
-              Nothing assigned yet. Build looks under Days and the packing list writes itself.
-            </div>
-          ) : (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}>
-                <span className="rl-eyebrow">{packedCount} of {pieceIds.length} packed</span>
-                <button
-                  className="rl-btn quiet tiny"
-                  onClick={() => updateTrip({ ...trip, packed: {} })}
-                >
-                  Reset
-                </button>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}>
+            <span className="rl-eyebrow">{packedCount} of {totalCount} packed</span>
+            <button
+              className="rl-btn quiet tiny"
+              onClick={() => updateTrip({ ...trip, packed: {} })}
+            >
+              Reset
+            </button>
+          </div>
+
+          {PACKING_ESSENTIALS.map((g) => (
+            <section key={g.group} style={{ marginBottom: 26 }}>
+              <div className="rl-railhead">
+                <span className="rl-railname">{g.group}</span>
+                <span className="rl-raildots" />
+                <span className="rl-railcount rl-mono">{String(g.items.length).padStart(2, "0")}</span>
               </div>
-              {Object.keys(packing).sort().map((key) => {
-                const [owner, cat] = key.split("|");
+              {g.items.map((label) => {
+                const key = `ess:${g.group}:${label}`;
+                const on = !!(trip.packed && trip.packed[key]);
                 return (
-                  <section key={key} style={{ marginBottom: 26 }}>
-                    <div className="rl-railhead">
-                      <span className="rl-railname">{OWNER_LABEL[owner]} · {cat}</span>
-                      <span className="rl-raildots" />
-                      <span className="rl-railcount rl-mono">{String(packing[key].length).padStart(2, "0")}</span>
-                    </div>
-                    {packing[key].map((it) => {
-                      const on = !!(trip.packed && trip.packed[it.id]);
-                      const wornOn = trip.days
-                        .filter((d) => d.slots.includes(it.id))
-                        .map((d) => dayLabel(d.date).slice(0, 3));
-                      return (
-                        <button
-                          key={it.id}
-                          className="rl-packrow"
-                          style={{ width: "100%", background: "none", border: 0, borderBottom: "1px solid var(--rule-soft)", textAlign: "left" }}
-                          onClick={() =>
-                            updateTrip({ ...trip, packed: { ...(trip.packed || {}), [it.id]: !on } })
-                          }
-                        >
-                          <span className="rl-packbox" data-on={on ? "true" : "false"}>{on ? "✓" : ""}</span>
-                          <span className="rl-packthumb">{it.img && <img src={it.img} alt="" />}</span>
-                          <span style={{ flex: 1, fontSize: 14, textDecoration: on ? "line-through" : "none", color: on ? "var(--muted)" : "var(--ink)" }}>
-                            {it.name || it.cat}
-                          </span>
-                          <span className="rl-mono" style={{ fontSize: 10, color: "var(--muted)" }}>
-                            {wornOn.join(" ")}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </section>
+                  <button
+                    key={key}
+                    className="rl-packrow"
+                    style={{ width: "100%", background: "none", border: 0, borderBottom: "1px solid var(--rule-soft)", textAlign: "left" }}
+                    onClick={() =>
+                      updateTrip({ ...trip, packed: { ...(trip.packed || {}), [key]: !on } })
+                    }
+                  >
+                    <span className="rl-packbox" data-on={on ? "true" : "false"}>{on ? "✓" : ""}</span>
+                    <span style={{ flex: 1, fontSize: 14, textDecoration: on ? "line-through" : "none", color: on ? "var(--muted)" : "var(--ink)" }}>
+                      {label}
+                    </span>
+                  </button>
                 );
               })}
-            </>
+            </section>
+          ))}
+
+          {pieceIds.length === 0 ? (
+            <div className="rl-empty">
+              No outfits assigned yet — once you build looks under Days, pieces show up below the standing list.
+            </div>
+          ) : (
+            Object.keys(packing).sort().map((key) => {
+              const [owner, cat] = key.split("|");
+              return (
+                <section key={key} style={{ marginBottom: 26 }}>
+                  <div className="rl-railhead">
+                    <span className="rl-railname">{OWNER_LABEL[owner]} · {cat}</span>
+                    <span className="rl-raildots" />
+                    <span className="rl-railcount rl-mono">{String(packing[key].length).padStart(2, "0")}</span>
+                  </div>
+                  {packing[key].map((it) => {
+                    const on = !!(trip.packed && trip.packed[it.id]);
+                    const wornOn = trip.days
+                      .filter((d) => d.slots.includes(it.id))
+                      .map((d) => dayLabel(d.date).slice(0, 3));
+                    return (
+                      <button
+                        key={it.id}
+                        className="rl-packrow"
+                        style={{ width: "100%", background: "none", border: 0, borderBottom: "1px solid var(--rule-soft)", textAlign: "left" }}
+                        onClick={() =>
+                          updateTrip({ ...trip, packed: { ...(trip.packed || {}), [it.id]: !on } })
+                        }
+                      >
+                        <span className="rl-packbox" data-on={on ? "true" : "false"}>{on ? "✓" : ""}</span>
+                        <span className="rl-packthumb">{it.img && <img src={it.img} alt="" />}</span>
+                        <span style={{ flex: 1, fontSize: 14, textDecoration: on ? "line-through" : "none", color: on ? "var(--muted)" : "var(--ink)" }}>
+                          {it.name || it.cat}
+                        </span>
+                        <span className="rl-mono" style={{ fontSize: 10, color: "var(--muted)" }}>
+                          {wornOn.join(" ")}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </section>
+              );
+            })
           )}
         </div>
       )}
